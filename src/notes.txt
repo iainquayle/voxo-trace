@@ -1,0 +1,14 @@
+writing to storage buffer and reading back ad if in terms of 2d shouldnt be any issue
+create transaltion function that takes in the pixewl coordinates
+check with the compute shader examplle to figure out writing to buffer?
+
+
+math of spatial propogation:
+
+
+
+notes on rust in general
+	:mut differences when defining something
+		- mut infront of var name will create a var itself that can be changed
+		- &mut is put infront of the type instead of the var beause it modifies the type itself, rather than the behaviour of the variable
+	:self is the default var name for self, while Self is the default type holder, this also goes for fn, where fn represents function while Fn represents a function as a type
