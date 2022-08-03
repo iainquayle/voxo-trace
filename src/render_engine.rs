@@ -114,7 +114,7 @@ pub mod render_engine {
 				format: wgpu::TextureFormat::Rgba8Unorm,//surface.get_preferred_format(&adapter).unwrap()
 				width: window.inner_size().width,
 				height: window.inner_size().height,
-				present_mode: wgpu::PresentMode::Mailbox
+				present_mode: wgpu::PresentMode::Immediate,
 			};
 			surface.configure(&device, &surface_config);
 

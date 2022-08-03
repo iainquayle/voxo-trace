@@ -82,7 +82,7 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 	var depth: i32 = 0;
 	//also regarding the stack it should be possible to make it such that the centers arent stored, so long as the octant was kept
 	//if this is done, in combination with the current center, the previous center can be calculated
-	//if space is a problem this may help, should also cut down on memory bandwidth issues
+	//if space is a problem this may help, should also cut down on memory bandwidth issues which may provide more stable performance on lesser hardware
 	stack[depth] = StackEntry(0u, vec3<f32>(0.0));
 	var octant_index: u32 = 0u;
 	var moving_up: bool = false;
@@ -103,10 +103,6 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 	var length: f32 = 0.0;
 	
 	loop { if(depth < 0 || transmittance.w < MIN_TRANS || iters > MAX_ITERS) {break;}
-		//if(pos.x > center.x || ((pos.x == center.x) && dir_vec.x > 0.0)) { octant_index = POSITIVE_X; } else { octant_index = NEGATIVE_OCTANT; }
-		//if(pos.y > center.y || ((pos.y == center.y) && dir_vec.y > 0.0)) { octant_index = octant_index + POSITIVE_Y; }
-		//if(pos.z > center.z || ((pos.z == center.z) && dir_vec.z > 0.0)) { octant_index = octant_index + POSITIVE_Z; }
-
 		octant_index = POSITIVE_X * u32(pos.x > center.x || ((pos.x == center.x) && dir_vec.x > 0.0)) +
 			POSITIVE_Y * u32(pos.y > center.y || ((pos.y == center.y) && dir_vec.y > 0.0)) +
 			POSITIVE_Z * u32(pos.z > center.z || ((pos.z == center.z) && dir_vec.z > 0.0));
@@ -116,6 +112,8 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 		//let lod_size: f32 = max(length * lod_factor, 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE);
 		let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE > level_size;
 		//let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || pow(f32(iters) / f32(MAX_ITERS), 5.0) * MAX_SIZE > level_size;
+
+
 		if(!moving_up && !bottom) {
 			stack[depth + 1].index = octant.index;
 			level_size = level_size / 2.0;
@@ -132,7 +130,10 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 			//center.y = center.y + level_size * f32(1 | (i32((octant_index & POSITIVE_Y) == POSITIVE_Y) << 31));
 			//center.z = center.z + level_size * f32(1 | (i32((octant_index & POSITIVE_Z) == POSITIVE_Z) << 31));
 
-			center = center + level_size * (vec3<f32>(-1.0) + (vec3<f32>(2.0) * vec3<f32>(vec3<bool>((octant_index & POSITIVE_X) == POSITIVE_X, (octant_index & POSITIVE_Y) == POSITIVE_Y, (octant_index & POSITIVE_Z) == POSITIVE_Z)))); 
+			center = center + level_size * (vec3<f32>(-1.0) + (vec3<f32>(2.0) * 
+				vec3<f32>(vec3<bool>((octant_index & POSITIVE_X) == POSITIVE_X, 
+				(octant_index & POSITIVE_Y) == POSITIVE_Y, 
+				(octant_index & POSITIVE_Z) == POSITIVE_Z)))); 
 
 			depth = depth + 1;
 			stack[depth].center = center;
@@ -141,18 +142,12 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 				last_octant = octant;
 			}
 
-			//var colour_factor = 0.0;
-			//if(lod_size < level_size && lod_size > level_size / 2.0) {
-			//	colour_factor = lod_size / level_size;
-			//} else if (lod_size > level_size || octant.index == NULL_INDEX) {
-			//	colour_factor = 1.0;
-			//}
 			//may be some ways in which more performance could be gained by doing more with vector operations
 			//ie next pos, abs around the plane checker
 
 			let to_zero: vec3<f32> = (center - pos) * inv_vec;
+			
 			var next_pos: vec3<f32> = vec3<f32>(MAX_SIZE * 2.0);
-
 			if ((to_zero.x > 0.0 && pos.x != center.x) && (to_zero.x < to_zero.y || to_zero.y <= 0.0) && (to_zero.x < to_zero.z || to_zero.z <= 0.0)) {
 				next_pos = vec3<f32>(center.x, pos.y + to_zero.x * dir_vec.y, pos.z + to_zero.x * dir_vec.z);
 			} else if((to_zero.y > 0.0 && pos.y != center.y) && (to_zero.y < to_zero.z || to_zero.z <= 0.0)) {
@@ -161,8 +156,16 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 				next_pos = vec3<f32>(pos.x + to_zero.z * dir_vec.x, pos.y + to_zero.z * dir_vec.y, center.z);
 			}
 
+			//var next_pos: vec4<f32> = vec4<f32>(MAX_SIZE * 2.0);
+			//if(to_zero.x > 0.0 && pos.x != center.x) {
+			//	next_pos = vec4<f32>(center.x, pos.y + to_zero.x * dir_vec.y, pos.z + to_zero.x * dir_vec.z, to_zero.x);
+			//} if(to_zero.y > 0.0 && to_zero.y < next_pos.w && pos.y != center.y) {
+			//	next_pos = vec4<f32>(pos.x + to_zero.y * dir_vec.x, center.y, pos.z + to_zero.y * dir_vec.z, to_zero.y); 
+			//} if(to_zero.z > 0.0 && to_zero.z < next_pos.w && pos.z != center.z) {
+			//	next_pos = vec4<f32>(pos.x + to_zero.z * dir_vec.x, pos.y + to_zero.z * dir_vec.y, center.z, to_zero.z);
+			//}
+			
 			//cant use completely flattened nextpos as it will result in unecessary nans
-			//
 			//var next_pos: vec4<f32> = vec4<f32>(MAX_SIZE * 2.0);
 			//var is_next: bool = to_zero.x > 0.0 && pos.x != center.x;
 			//next_pos = next_pos * vec4<f32>(f32(!is_next)) + vec4<f32>(center.x, pos.y + to_zero.x * dir_vec.y, pos.z + to_zero.x * dir_vec.z, to_zero.x) * vec4<f32>(f32(is_next));
