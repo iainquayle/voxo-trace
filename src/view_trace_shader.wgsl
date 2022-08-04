@@ -58,6 +58,11 @@ let NEGATIVE_OCTANT: u32 = 0u;
 [[group(0), binding(200)]] var<storage, write> view: ViewData;
 [[group(0), binding(300)]] var output: texture_storage_2d<rgba8unorm, write>;
 
+//@group(0) @binding(0) var<storage, read> dag: NodeBuffer;
+//@group(0) @binding(100) var<uniform> camera: ViewInput;
+//@group(0) @binding(200) var<storage, write> view: ViewData;
+//@group(0) @binding(300) var output: texture_storage_2d<rgba8unorm, write>;
+
 //TODO: generating a vector field texture, then just use that, that will require being put into the rust rather than here
 //vectors generated stretch vertically but not horizontally? should check with square res
 fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
@@ -118,7 +123,6 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 			stack[depth + 1].index = octant.index;
 			level_size = level_size / 2.0;
 
-			//center = center + level_size * (2.0 * f32((octant_index & POSITIVE_X) == POSITIVE_X) - 1.0);
 			//if((octant_index & POSITIVE_X) == POSITIVE_X) { center.x = center.x + level_size; }
 			//else { center.x = center.x - level_size; }
 			//if((octant_index & POSITIVE_Y) == POSITIVE_Y) { center.y = center.y + level_size; }
@@ -156,6 +160,8 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 				next_pos = vec3<f32>(pos.x + to_zero.z * dir_vec.x, pos.y + to_zero.z * dir_vec.y, center.z);
 			}
 
+			//slower???
+			//may just be slower until more diverse and heavily branching dags are ran
 			//var next_pos: vec4<f32> = vec4<f32>(MAX_SIZE * 2.0);
 			//if(to_zero.x > 0.0 && pos.x != center.x) {
 			//	next_pos = vec4<f32>(center.x, pos.y + to_zero.x * dir_vec.y, pos.z + to_zero.x * dir_vec.z, to_zero.x);
@@ -183,7 +189,7 @@ fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 			level_size = level_size * f32(1u << u32(moving_up));
 
 			//not moving up
-			//black not coming entering from the dot
+			//black not coming entg from the dot
 			let len = dot(next_pos - pos, dir_vec);
 			length = length + (len * f32(!moving_up));
 			//if statment required so that NANs do not proliferate in pos
