@@ -78,7 +78,7 @@ fn unpack4x8unorm_local(x: u32) -> vec4<f32> {
 }
 
 [[stage(compute), workgroup_size(8, 8)]]
-fn main([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
+fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
 	var lod_factor: f32 = sin(FOV / dims.x);
 

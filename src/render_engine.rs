@@ -13,6 +13,12 @@ pub mod render_engine {
 	intermediates: 200-299
 	output: 300
 	 */
+	enum BindIndeces {
+		Dag = 0,
+		TemporalInput = 102,
+		ViewInput = 100,
+		ViewData = 200,
+	}
 	const GROUP_INDEX: u32 = 0;
 	const DAG_INDEX: u32 = 0;
 	const TEMPORAL_INPUT_INDEX: u32 = 102;
@@ -28,11 +34,10 @@ pub mod render_engine {
 	const LIGHT_TEXTURE_WIDTH: u32 = 1024;
 	const LIGHT_TEXTURE_HEIGHT: u32 = 1024;
 
+	//TODO: move shaders all into one file for bidnings ease of managment
 	//TODO: see about making a macro that changes the string to automatically input the work group dimensions and othe r conts
-	macro_rules! VIEW_TRACE_SHADER_LOC {() => {"view_trace_shader.wgsl"};}
-	macro_rules! LIGHT_TRACE_SHADER_LOC {() => {"light_trace_shader.wgsl"};}
-	macro_rules! LIGHT_PROP_SHADER_LOC { () => {"light_prop_shader.wgsl"};}
-	macro_rules! FINAL_SHADER_LOC {() => {"final_shader.wgsl"};}
+	macro_rules! SHADERS_LOC {() => {"shaders.wgsl"};}
+	macro_rules! VIEW_TRACE_ENTRY {() => {"view_trace"};}
 
 	/*
 	move temporals to their own uniform structure, no need to have them copied ina bunch of different inputs, unless it is used as a way to progress animations at different rates
@@ -151,7 +156,7 @@ pub mod render_engine {
 			//returns buffers required to make one lane in double buffered pipline
 			//does not need to create the input uniform or buffers or the output texture
 			let create_parallel_buffers = || {
-				let view_buffer_closure = || {
+				let create_view_buffer= || {
 					device.create_buffer( &wgpu::BufferDescriptor {
 						label: Some("view data buffer"),
 						mapped_at_creation: false,
@@ -163,7 +168,7 @@ pub mod render_engine {
 				light buffer when creating multiples will either need to be made as multiple buffers, or one large buffer
 				should be ok since the buffer can be treated as a muti dimensionsonal array once it is in the shader
 				 */
-				let light_buffer_closure = || {
+				let create_light_buffer= || {
 					device.create_buffer( &wgpu::BufferDescriptor {
 						label: Some(&format!("light buffer {}", 0)),
 						mapped_at_creation: false,
@@ -172,7 +177,7 @@ pub mod render_engine {
 					})
 				};
 
-				([view_buffer_closure(), view_buffer_closure()], [light_buffer_closure(), light_buffer_closure()])
+				([create_view_buffer(), create_view_buffer()], [create_light_buffer(), create_light_buffer()])
 			};
 			let (view_buffers, light_buffers) = create_parallel_buffers();
 
@@ -180,8 +185,9 @@ pub mod render_engine {
 
 			/*
 			create view trace pipeline
+			TODO: this should be able to be turned into just a singular pipline layout, not differentiated as view trace
 			 */
-			let view_trace_shader = device.create_shader_module(&include_wgsl!(VIEW_TRACE_SHADER_LOC!()));
+			let view_trace_shader = device.create_shader_module(&include_wgsl!(SHADERS_LOC!()));
 			let view_trace_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {//not sure if this is necessary when in this compute case, ie simple single stage shader no texture sampling required...
 				label: Some("view trace pipline layout"),
 				push_constant_ranges: &[],
@@ -237,7 +243,7 @@ pub mod render_engine {
 				label: Some("view trace pipeline"),
 				layout: Some(&view_trace_layout),
 				module: &view_trace_shader,
-				entry_point: "main",
+				entry_point: VIEW_TRACE_ENTRY!(), 
 			});	
 
 			let create_view_trace_bindgroup = |view: &wgpu::Buffer| {
