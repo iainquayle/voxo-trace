@@ -1,3 +1,6 @@
+//TODO: consider trying to implement something that steps via set steps, that are adjusted based on the current depth?
+//this would still need to check whether a jump would land off of a bound, and find which step would get it to a bound
+//likely no quicker in the end
 struct Octant {
 	index: u32; //null is u32 max, 0xFFFFFFFF
 	colour: u32; //rgba
@@ -44,7 +47,7 @@ let MAX_DEPTH: i32 = 16;
 let NULL_INDEX: u32 = 0xFFFFFFFFu;
 let MASK_8BIT: u32 = 0x000000FFu;
 let MAX_SIZE: f32 = 32768.0;
-let MAX_ITERS: u32 = 256u;
+let MAX_ITERS: u32 = 128u;
 let MIN_TRANS: f32 = 0.001;
 let FOV: f32 = 1.1;
 
@@ -115,8 +118,8 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 
 		let octant: Octant = dag.nodes[stack[depth].index].octants[octant_index];
 		//let lod_size: f32 = max(length * lod_factor, 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE);
-		let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE > level_size;
-		//let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || pow(f32(iters) / f32(MAX_ITERS), 5.0) * MAX_SIZE > level_size;
+		//let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || 8.0 / f32(MAX_ITERS + 8u - iters) * MAX_SIZE > level_size;
+		let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || pow(f32(iters) / f32(MAX_ITERS), 6.0) * MAX_SIZE > level_size;
 
 
 		if(!moving_up && !bottom) {

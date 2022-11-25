@@ -182,7 +182,6 @@ pub mod render_engine {
 			let (view_buffers, light_buffers) = create_parallel_buffers();
 
 
-
 			/*
 			create view trace pipeline
 			TODO: this should be able to be turned into just a singular pipline layout, not differentiated as view trace

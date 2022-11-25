@@ -24,7 +24,7 @@ fn main() {
 	let window = WindowBuilder::new().with_inner_size(PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)).with_title("Test").with_resizable(false).build(&event_loop).expect("fail to build window");
 	//window.set_cursor_grab(true).expect("unable to grab cursor");
 
-	let mut logic = logic_engine::logic_engine::LogicEngine::new(OctDag::new_test(TestDagType::PILLAR, 6));
+	let mut logic = logic_engine::logic_engine::LogicEngine::new(OctDag::new_test(TestDagType::PILLAR, 8));
 		
 	logic.dag.print_size();
 	let mut render = render_engine::render_engine::RenderEngine::new(&window, &logic);
