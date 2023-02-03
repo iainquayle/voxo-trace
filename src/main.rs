@@ -12,13 +12,13 @@ pub mod logic_engine;
 pub mod oct_dag;
 pub mod io;
 
-const WINDOW_WIDTH: u16 = 1920; //should be 1280
-const WINDOW_HEIGHT: u16 = 1080; //should be 720
+const WINDOW_WIDTH: u16 = 1920; 
+const WINDOW_HEIGHT: u16 = 1080;
 
 fn main() {
 	env_logger::init();
 
-	
+    //written from nvim	
 
 	let mut event_loop = EventLoop::new();
 	let window = WindowBuilder::new().with_inner_size(PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)).with_title("Test").with_resizable(false).build(&event_loop).expect("fail to build window");

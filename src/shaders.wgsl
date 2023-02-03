@@ -47,7 +47,7 @@ let MAX_DEPTH: i32 = 16;
 let NULL_INDEX: u32 = 0xFFFFFFFFu;
 let MASK_8BIT: u32 = 0x000000FFu;
 let MAX_SIZE: f32 = 32768.0;
-let MAX_ITERS: u32 = 128u;
+let MAX_ITERS: u32 = 256u;
 let MIN_TRANS: f32 = 0.001;
 let FOV: f32 = 1.1;
 
@@ -80,7 +80,7 @@ fn unpack4x8unorm_local(x: u32) -> vec4<f32> {
 	return vec4<f32>(vec4<u32>(x >> 24u & MASK_8BIT, x >> 16u & MASK_8BIT, x >> 8u & MASK_8BIT, x & MASK_8BIT));
 }
 
-[[stage(compute), workgroup_size(8, 8)]]
+[[stage(compute), workgroup_size(8, 4)]]
 fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
 	var lod_factor: f32 = sin(FOV / dims.x);
@@ -119,7 +119,7 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 		let octant: Octant = dag.nodes[stack[depth].index].octants[octant_index];
 		//let lod_size: f32 = max(length * lod_factor, 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE);
 		//let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || 8.0 / f32(MAX_ITERS + 8u - iters) * MAX_SIZE > level_size;
-		let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || pow(f32(iters) / f32(MAX_ITERS), 6.0) * MAX_SIZE > level_size;
+		let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || pow(f32(iters) / f32(MAX_ITERS), 8.0) * MAX_SIZE > level_size;
 
 
 		if(!moving_up && !bottom) {

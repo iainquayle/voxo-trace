@@ -1,11 +1,15 @@
 pub mod render_engine {
-	use pollster::FutureExt;
+	use std::{thread, fs::File, io::Write};
+
+use pollster::FutureExt;
 	use wgpu::{include_wgsl, util::DeviceExt};
 	use winit::{window::{Window},};
 	use glam::{Vec3, Vec4, UVec4};
 	use crate::{oct_dag::{oct_dag::{Node}}, logic_engine::logic_engine::LogicEngine};
 
 
+	const REPORT_AFTER_FRAMES: u64 = 500;
+	//const TARGET_FRAMES: u32 = 300;
 
 	/*
 	read only: 0-99
@@ -13,31 +17,24 @@ pub mod render_engine {
 	intermediates: 200-299
 	output: 300
 	 */
-	enum BindIndeces {
-		Dag = 0,
-		TemporalInput = 102,
-		ViewInput = 100,
-		ViewData = 200,
-	}
 	const GROUP_INDEX: u32 = 0;
 	const DAG_INDEX: u32 = 0;
-	const TEMPORAL_INPUT_INDEX: u32 = 102;
 	const VIEW_TRACE_INPUT_INDEX: u32 = 100;
-	const LIGHT_TRACE_INPUT_INDEX: u32 = 101;
+	const TEMPORAL_INPUT_INDEX: u32 = 102;
 	const VIEW_DATA_INDEX: u32 = 200;
-	const LIGHT_DATA_INDEX: u32 = 201;
 	const OUTPUT_TEXTURE_INDEX: u32 = 300;
 
 	const WORK_GROUP_WIDTH: u32 = 8;
-	const WORK_GROUP_HEIGHT: u32 = 8;
+	const WORK_GROUP_HEIGHT: u32 = 4;
 
 	const LIGHT_TEXTURE_WIDTH: u32 = 1024;
 	const LIGHT_TEXTURE_HEIGHT: u32 = 1024;
 
-	//TODO: move shaders all into one file for bidnings ease of managment
 	//TODO: see about making a macro that changes the string to automatically input the work group dimensions and othe r conts
 	macro_rules! SHADERS_LOC {() => {"shaders.wgsl"};}
 	macro_rules! VIEW_TRACE_ENTRY {() => {"view_trace"};}
+
+
 
 	/*
 	move temporals to their own uniform structure, no need to have them copied ina bunch of different inputs, unless it is used as a way to progress animations at different rates
@@ -85,6 +82,7 @@ pub mod render_engine {
 		//view_trace_layout: wgpu::PipelineLayout,
 		view_trace_pipeline: wgpu::ComputePipeline,
 
+        //view trace bind groups ran in parallel for final shading synchronization
 		view_trace_bindgroups: [wgpu::BindGroup; 2],
 		//output_view: wgpu::TextureView,
 
@@ -94,7 +92,12 @@ pub mod render_engine {
 
 		//camera: ViewInputData,
 		frame_counter: u64,
-		fps_prev_time: u128,
+		previous_frame_time: u128,
+		//performance stats
+        frame_times_micros: [f64; REPORT_AFTER_FRAMES as usize],
+		ave_frame_time: f64,
+		max_frame_time: u128,
+		min_frame_time: u128,	
 	}
 
 	impl RenderEngine {
@@ -108,18 +111,23 @@ pub mod render_engine {
 				force_fallback_adapter: false,
 			}).block_on().expect("Fail to find suitable adapter");
 			
+			let limits = adapter.limits();
+			println!("max workgroup storage: {}\ndefault limit: {}",
+				limits.max_compute_workgroup_storage_size,
+				wgpu::Limits::default().max_compute_workgroup_storage_size);
 			let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor{
 				features: wgpu::Features::default(),
+				//limits: wgpu::Limits{max_compute_workgroup_storage_size: 24000, ..Default::default()},
 				limits: wgpu::Limits{..Default::default()},
 				label: Some("device"),
 			}, None).block_on().expect("failed to create device and queue");
-
+			
 			let surface_config = wgpu::SurfaceConfiguration {
 				usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
 				format: wgpu::TextureFormat::Rgba8Unorm,//surface.get_preferred_format(&adapter).unwrap()
 				width: window.inner_size().width,
 				height: window.inner_size().height,
-				present_mode: wgpu::PresentMode::Immediate,
+				present_mode: wgpu::PresentMode::Fifo,
 			};
 			surface.configure(&device, &surface_config);
 
@@ -128,17 +136,20 @@ pub mod render_engine {
 			/*
 			create buffers
 			 */
+			let byte_dag_array = unsafe{std::slice::from_raw_parts(state.dag.nodes[..].as_ptr() as *const u8,
+				std::mem::size_of::<Node>() * state.dag.nodes.len())};
+            //must have trait POD on it, however that allows for things like bit fiddling
+            //let byte_dag_arr = bytemuck::bytes_of(&state.dag.nodes);
+			let dag_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+				label: Some("dag buffer"),
+				usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+				contents: byte_dag_array,
+			});
 			let view_input_uniform = device.create_buffer( &wgpu::BufferDescriptor {
 				label: Some(" buffer"),
 				mapped_at_creation: false,
 				usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 				size: std::mem::size_of::<ViewInputData>() as u64,
-			});
-			let byte_dag_array = unsafe{std::slice::from_raw_parts(state.dag.nodes[..].as_ptr() as *const u8, std::mem::size_of::<Node>() * state.dag.nodes.len())};
-			let dag_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
-				label: Some("dag buffer"),
-				usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-				contents: byte_dag_array,
 			});
 			let output_texture = device.create_texture(&wgpu::TextureDescriptor {
 				label: Some("output texture"),
@@ -156,32 +167,29 @@ pub mod render_engine {
 			//returns buffers required to make one lane in double buffered pipline
 			//does not need to create the input uniform or buffers or the output texture
 			let create_parallel_buffers = || {
-				let create_view_buffer= || {
+                let create_buffer = |size: usize| {
 					device.create_buffer( &wgpu::BufferDescriptor {
 						label: Some("view data buffer"),
 						mapped_at_creation: false,
 						usage: wgpu::BufferUsages::STORAGE,
-						size: (surface_config.height * surface_config.width * std::mem::size_of::<ViewData>() as u32) as u64,
+						size: size as u64,
 					})
 				};
 				/*
 				light buffer when creating multiples will either need to be made as multiple buffers, or one large buffer
 				should be ok since the buffer can be treated as a muti dimensionsonal array once it is in the shader
 				 */
-				let create_light_buffer= || {
-					device.create_buffer( &wgpu::BufferDescriptor {
-						label: Some(&format!("light buffer {}", 0)),
-						mapped_at_creation: false,
-						usage: wgpu::BufferUsages::STORAGE,
-						size: (LIGHT_TEXTURE_WIDTH * LIGHT_TEXTURE_HEIGHT * std::mem::size_of::<LightData>() as u32) as u64,
-					})
-				};
 
-				([create_view_buffer(), create_view_buffer()], [create_light_buffer(), create_light_buffer()])
+                ([create_buffer((surface_config.height * surface_config.width * std::mem::size_of::<ViewData>() as u32) as usize),
+				create_buffer((surface_config.height * surface_config.width * std::mem::size_of::<ViewData>() as u32) as usize)], 
+                [create_buffer((LIGHT_TEXTURE_WIDTH * LIGHT_TEXTURE_HEIGHT * std::mem::size_of::<LightData>() as u32) as usize),
+				create_buffer((LIGHT_TEXTURE_WIDTH * LIGHT_TEXTURE_HEIGHT * std::mem::size_of::<LightData>() as u32) as usize)])
 			};
 			let (view_buffers, light_buffers) = create_parallel_buffers();
 
 
+            
+			
 			/*
 			create view trace pipeline
 			TODO: this should be able to be turned into just a singular pipline layout, not differentiated as view trace
@@ -245,6 +253,10 @@ pub mod render_engine {
 				entry_point: VIEW_TRACE_ENTRY!(), 
 			});	
 
+            
+
+			/*
+			 */
 			let create_view_trace_bindgroup = |view: &wgpu::Buffer| {
 				device.create_bind_group(&wgpu::BindGroupDescriptor {
 					label: Some("view trace bindgroup"),
@@ -352,9 +364,11 @@ pub mod render_engine {
 			*/
 
 
+            /*
 			let create_final_bindgroup = || {
 				todo!();
 			};
+            */
 
 
 			return RenderEngine {
@@ -375,7 +389,12 @@ pub mod render_engine {
 
 				//camera: camera,
 				frame_counter: 0,
-				fps_prev_time: 0,			
+				previous_frame_time: 0,
+				
+                frame_times_micros: [0.0; REPORT_AFTER_FRAMES as usize],
+				ave_frame_time: 0.0,
+				max_frame_time: 0,
+				min_frame_time: 0,
 			}
 		}
 
@@ -406,6 +425,7 @@ pub mod render_engine {
 
 			drop(view_trace_pass);
 
+	
 			let surface_texture = self.surface.get_current_texture()?;
 			encoder.copy_texture_to_texture(
 				wgpu::ImageCopyTexture {
@@ -427,19 +447,44 @@ pub mod render_engine {
 				},
 			);
 
+			/*
+			if state.start_time.elapsed().as_micros() - self.previous_frame_time > 0 {
+				thread::sleep(std::time::Duration::from_micros(0));	
+			}
+			*/
+
 			//if wnating to make a multi stage rendering process, create second encoder, and submitt both at once
 			//the second will need to operate on data given by the previous iteration rather than the same
+			self.previous_frame_time = state.start_time.elapsed().as_micros();
 			self.queue.submit(std::iter::once(encoder.finish()));
 			surface_texture.present();
-
-			/*
-			 * not currently perfectly accurate, but does approximate the correct fps given some time
-			 */
-			self.frame_counter += 1;
-			if self.frame_counter % 500 == 0 {
-				println!("fps: {}", 500.0 / ((state.start_time.elapsed().as_millis() - self.fps_prev_time) as f32 / 1000.0));
-				self.fps_prev_time = state.start_time.elapsed().as_millis();
+			let frame_time = state.start_time.elapsed().as_micros() - self.previous_frame_time;
+			
+			self.frame_times_micros[(self.frame_counter % REPORT_AFTER_FRAMES) as usize] = frame_time as f64 / 1000.0;
+			self.ave_frame_time = self.ave_frame_time + frame_time as f64 * 1.0 / REPORT_AFTER_FRAMES as f64;
+			if self.max_frame_time < frame_time {
+				self.max_frame_time = frame_time;
 			}
+			if self.min_frame_time > frame_time {
+				self.min_frame_time = frame_time;
+			}
+			if self.frame_counter % REPORT_AFTER_FRAMES  == 0 {
+				//println!("fps: {}", 500.0 / ((state.start_time.elapsed().as_millis() - self.fps_prev_time) as f32 / 1000.0));
+				println!("frame time (milis): {:.2}, max: {:.2}, min: {:.2}\nideal ave fps: {:.2}, min: {:.2}, max: {:.2}\n--------------------------------------------------------------",
+					self.ave_frame_time / 1000.0, self.max_frame_time as f64 / 1000.0, self.min_frame_time as f64 / 1000.0,
+					(1000000.0 / self.ave_frame_time), (1000000.0 / self.max_frame_time as f64), (1000000.0 / self.min_frame_time as f64));
+				if self.max_frame_time / 1000 > 10 {
+					println!("frames recorded");
+					let mut file = File::create("./times.csv").expect("unable to make file for frame times");
+					for time in self.frame_times_micros {
+						file.write_fmt(format_args!("{:.2},\n", time)).expect("failed to write to file frame times");
+					}
+				}
+				self.min_frame_time = u128::MAX;
+				self.max_frame_time = 0;
+				self.ave_frame_time = 0.0;
+			}
+			self.frame_counter += 1;
 
 			return Ok(());
 		}
