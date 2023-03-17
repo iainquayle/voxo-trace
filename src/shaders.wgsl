@@ -1,11 +1,8 @@
-//TODO: consider trying to implement something that steps via set steps, that are adjusted based on the current depth?
-//this would still need to check whether a jump would land off of a bound, and find which step would get it to a bound
-//likely no quicker in the end
 struct Octant {
 	index: u32; //null is u32 max, 0xFFFFFFFF
 	colour: u32; //rgba
 	normal: u32; //24 bits normal, 8 for density 
-	extra: u32; //, 8 for shine,  16 for frames // 8 would be reserved for a larger tree but as it is, memory constraints make it not feasible anyways
+	extra: u32; //, 8 for shine,  16 for frames // 8 would be for indexing in larger tree 
 };
 struct Node { //vec3 ints, x = index, y = colour, z = addition info
 	octants: array<Octant, 8>;
@@ -66,20 +63,30 @@ let NEGATIVE_OCTANT: u32 = 0u;
 //@group(0) @binding(200) var<storage, write> view: ViewData;
 //@group(0) @binding(300) var output: texture_storage_2d<rgba8unorm, write>;
 
-//TODO: generating a vector field texture, then just use that, that will require being put into the rust rather than here
+//TODO: generating a vector field texture, then just use that, that will require being put into the rust rather 
 //vectors generated stretch vertically but not horizontally? should check with square res
 fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
-	let thetas: vec2<f32> = vec2<f32>(-((coords.x - dims.x / 2.0) / dims.x * FOV * 2.0), ((coords.y - dims.y / 2.0) / dims.x * FOV * 2.0));
-	return cross(vec3<f32>(cos(thetas.x), 0.0, sin(thetas.x)), vec3<f32>(0.0, cos(thetas.y), sin(thetas.y)));
+	let thetas: vec2<f32> = vec2<f32>(-((coords.x - dims.x / 2.0) / dims.x * FOV * 2.0),
+		((coords.y - dims.y / 2.0) / dims.x * FOV * 2.0));
+	return cross(vec3<f32>(cos(thetas.x), 0.0, sin(thetas.x)),
+		vec3<f32>(0.0, cos(thetas.y), sin(thetas.y)));
 }
-fn rot(dir_vec: vec3<f32>, rads: vec3<f32>) -> vec3<f32> {
-	var new_vec = vec3<f32>(dir_vec.x, cos(rads.y) * dir_vec.y + sin(rads.y) * dir_vec.z, cos(rads.y) * dir_vec.z - sin(rads.y) * dir_vec.y);
-	return vec3<f32>(cos(rads.x) * new_vec.x - sin(rads.x) * new_vec.z, new_vec.y, cos(rads.x) * new_vec.z + sin(rads.x) * new_vec.x);
+fn rotation(direction_vec: vec3<f32>, rads: vec3<f32>) -> vec3<f32> {
+	var new_vec = vec3<f32>(direction_vec.x,
+		cos(rads.y) * direction_vec.y + sin(rads.y) * direction_vec.z,
+		cos(rads.y) * direction_vec.z - sin(rads.y) * direction_vec.y);
+	return vec3<f32>(cos(rads.x) * new_vec.x - sin(rads.x) * new_vec.z,
+		new_vec.y,
+		cos(rads.x) * new_vec.z + sin(rads.x) * new_vec.x);
 }
 fn unpack4x8unorm_local(x: u32) -> vec4<f32> {
-	return vec4<f32>(vec4<u32>(x >> 24u & MASK_8BIT, x >> 16u & MASK_8BIT, x >> 8u & MASK_8BIT, x & MASK_8BIT));
+	return vec4<f32>(vec4<u32>((x >> 24u) & MASK_8BIT,
+		(x >> 16u) & MASK_8BIT,
+		(x >> 8u) & MASK_8BIT,
+		x & MASK_8BIT));
 }
 
+//@compute @work_group(8, 4)
 [[stage(compute), workgroup_size(8, 4)]]
 fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
@@ -95,8 +102,8 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 	var octant_index: u32 = 0u;
 	var moving_up: bool = false;
 
-	let dir_vec: vec3<f32> = normalize(rot(get_view_vec(vec2<f32>(global_id.xy), dims), camera.rads.xyz));//vecs can be put in the push constants and not tyouched again, will migrate these out later
-	let inv_vec: vec3<f32> = vec3<f32>(1.0) / dir_vec;
+	let direction_vec: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.rads.xyz));
+	let inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction_vec;
 	var center: vec3<f32> = vec3<f32>(0.0);
 	var pos: vec3<f32> = camera.pos.xyz; //rays position
 
@@ -111,15 +118,17 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 	var length: f32 = 0.0;
 	
 	loop { if(depth < 0 || transmittance.w < MIN_TRANS || iters > MAX_ITERS) {break;}
-		octant_index = POSITIVE_X * u32(pos.x > center.x || ((pos.x == center.x) && dir_vec.x > 0.0)) +
-			POSITIVE_Y * u32(pos.y > center.y || ((pos.y == center.y) && dir_vec.y > 0.0)) +
-			POSITIVE_Z * u32(pos.z > center.z || ((pos.z == center.z) && dir_vec.z > 0.0));
+		octant_index = POSITIVE_X * u32(pos.x > center.x || ((pos.x == center.x) && direction_vec.x > 0.0)) +
+			POSITIVE_Y * u32(pos.y > center.y || ((pos.y == center.y) && direction_vec.y > 0.0)) +
+			POSITIVE_Z * u32(pos.z > center.z || ((pos.z == center.z) && direction_vec.z > 0.0));
 		
 
 		let octant: Octant = dag.nodes[stack[depth].index].octants[octant_index];
 		//let lod_size: f32 = max(length * lod_factor, 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE);
 		//let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || 8.0 / f32(MAX_ITERS + 8u - iters) * MAX_SIZE > level_size;
-		let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || pow(f32(iters) / f32(MAX_ITERS), 8.0) * MAX_SIZE > level_size;
+		let bottom: bool = octant.index == NULL_INDEX 
+			|| length * lod_factor > level_size 
+			|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * MAX_SIZE > level_size;
 
 
 		if(!moving_up && !bottom) {
@@ -152,39 +161,40 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 			//may be some ways in which more performance could be gained by doing more with vector operations
 			//ie next pos, abs around the plane checker
 
-			let to_zero: vec3<f32> = (center - pos) * inv_vec;
+			let to_zero: vec3<f32> = (center - pos) * inverse_vec;
 			
 			var next_pos: vec3<f32> = vec3<f32>(MAX_SIZE * 2.0);
-			if ((to_zero.x > 0.0 && pos.x != center.x) && (to_zero.x < to_zero.y || to_zero.y <= 0.0) && (to_zero.x < to_zero.z || to_zero.z <= 0.0)) {
-				next_pos = vec3<f32>(center.x, pos.y + to_zero.x * dir_vec.y, pos.z + to_zero.x * dir_vec.z);
-			} else if((to_zero.y > 0.0 && pos.y != center.y) && (to_zero.y < to_zero.z || to_zero.z <= 0.0)) {
-				next_pos = vec3<f32>(pos.x + to_zero.y * dir_vec.x, center.y, pos.z + to_zero.y * dir_vec.z);
-			} else if((to_zero.z > 0.0 && pos.z != center.z && dir_vec.z != 0.0)) {
-				next_pos = vec3<f32>(pos.x + to_zero.z * dir_vec.x, pos.y + to_zero.z * dir_vec.y, center.z);
+			if ((to_zero.x > 0.0 && pos.x != center.x) 
+				&& (to_zero.x < to_zero.y || to_zero.y <= 0.0) 
+				&& (to_zero.x < to_zero.z || to_zero.z <= 0.0)) {
+				next_pos = vec3<f32>(center.x,
+					pos.y + to_zero.x * direction_vec.y,
+					pos.z + to_zero.x * direction_vec.z);
+			} else if((to_zero.y > 0.0 && pos.y != center.y) 
+				&& (to_zero.y < to_zero.z || to_zero.z <= 0.0)) {
+				next_pos = vec3<f32>(pos.x + to_zero.y * direction_vec.x, 
+					center.y,
+					pos.z + to_zero.y * direction_vec.z);
+			} else if((to_zero.z > 0.0 && pos.z != center.z && direction_vec.z != 0.0)) {
+				next_pos = vec3<f32>(pos.x + to_zero.z * direction_vec.x,
+					pos.y + to_zero.z * direction_vec.y,
+					center.z);
 			}
 
 			//slower???
 			//may just be slower until more diverse and heavily branching dags are ran
 			//var next_pos: vec4<f32> = vec4<f32>(MAX_SIZE * 2.0);
 			//if(to_zero.x > 0.0 && pos.x != center.x) {
-			//	next_pos = vec4<f32>(center.x, pos.y + to_zero.x * dir_vec.y, pos.z + to_zero.x * dir_vec.z, to_zero.x);
+			//	next_pos = vec4<f32>(center.x, pos.y + to_zero.x * direction_vec.y, pos.z + to_zero.x * direction_vec.z, to_zero.x);
 			//} if(to_zero.y > 0.0 && to_zero.y < next_pos.w && pos.y != center.y) {
-			//	next_pos = vec4<f32>(pos.x + to_zero.y * dir_vec.x, center.y, pos.z + to_zero.y * dir_vec.z, to_zero.y); 
+			//	next_pos = vec4<f32>(pos.x + to_zero.y * direction_vec.x, center.y, pos.z + to_zero.y * direction_vec.z, to_zero.y); 
 			//} if(to_zero.z > 0.0 && to_zero.z < next_pos.w && pos.z != center.z) {
-			//	next_pos = vec4<f32>(pos.x + to_zero.z * dir_vec.x, pos.y + to_zero.z * dir_vec.y, center.z, to_zero.z);
+			//	next_pos = vec4<f32>(pos.x + to_zero.z * direction_vec.x, pos.y + to_zero.z * direction_vec.y, center.z, to_zero.z);
 			//}
 			
-			//cant use completely flattened nextpos as it will result in unecessary nans
-			//var next_pos: vec4<f32> = vec4<f32>(MAX_SIZE * 2.0);
-			//var is_next: bool = to_zero.x > 0.0 && pos.x != center.x;
-			//next_pos = next_pos * vec4<f32>(f32(!is_next)) + vec4<f32>(center.x, pos.y + to_zero.x * dir_vec.y, pos.z + to_zero.x * dir_vec.z, to_zero.x) * vec4<f32>(f32(is_next));
-			//is_next = to_zero.y > 0.0 && to_zero.y < next_pos.w && pos.y != center.y;
-			//next_pos = next_pos * vec4<f32>(f32(!is_next)) + vec4<f32>(pos.x + to_zero.y * dir_vec.x, center.y, pos.z + to_zero.y * dir_vec.z, to_zero.y) * vec4<f32>(f32(is_next));
-			//is_next = to_zero.z > 0.0 && to_zero.z < next_pos.w && pos.z != center.z;
-			//next_pos = next_pos * vec4<f32>(f32(!is_next)) + vec4<f32>(pos.x + to_zero.z * dir_vec.x, pos.y + to_zero.z * dir_vec.y, center.z, to_zero.z) * vec4<f32>(f32(is_next));
-			
-			
-			moving_up = !(abs(center.x - next_pos.x) <= level_size && abs(center.y - next_pos.y) <= level_size && abs(center.z - next_pos.z) <= level_size);		
+			moving_up = !(abs(center.x - next_pos.x) <= level_size 
+				&& abs(center.y - next_pos.y) <= level_size 
+				&& abs(center.z - next_pos.z) <= level_size);		
 	
 			//moving up
 			depth = depth - i32(moving_up); 
@@ -193,7 +203,7 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 
 			//not moving up
 			//black not coming entg from the dot
-			let len = dot(next_pos - pos, dir_vec);
+			let len = dot(next_pos - pos, direction_vec);
 			length = length + (len * f32(!moving_up));
 			//if statment required so that NANs do not proliferate in pos
 			//if(!moving_up) {
@@ -204,9 +214,6 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 			} else {
 				pos = next_pos;
 			}
-
-
-
 
 
 			//the density should add colours, while the alpha should subtract(ie only let through its colour, that being said think of water and how it only refracts blue)
@@ -226,7 +233,9 @@ fn view_trace([[builtin(global_invocation_id)]] global_id: vec3<u32>) {
 			if((octant_norm.w > 0.0 && octant_rgba.w > 0.0) && !moving_up) {
 				//changes the denisty to value dependant on distance covered and density
 				//octant_rgba.w = (len / (len + (3000.0 * (1.0 - octant_rgba.w)))) * (1.0 - rgba.w);
-				octant_norm.w = (len / (len + (3000.0 * ((1.0 - octant_norm.w) + (1.0 - octant_rgba.w))))) * transmittance.w;
+				octant_norm.w = (len / (len + (3000.0 
+					* ((1.0 - octant_norm.w) + (1.0 - octant_rgba.w))))) 
+					* transmittance.w;
 				//octant_rgba.xyz = octant_rgba
 				transmittance.w = transmittance.w - octant_norm.w;
 				
