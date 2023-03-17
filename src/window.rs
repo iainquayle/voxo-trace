@@ -31,6 +31,7 @@ impl Window {
 	pub fn event_loop(&mut self) {
 	}
 	pub fn record_events(&mut self, event: &WindowEvent) {
+      self.cursor_position = Vec2::ZERO;
 		match event {
 			WindowEvent::KeyboardInput {
 				input: KeyboardInput {

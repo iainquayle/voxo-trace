@@ -1,6 +1,6 @@
 use std::mem::size_of;
 extern crate glam;
-use glam::{Vec3, Vec4, IVec3, Vec4Swizzles, const_ivec3};
+use glam::{Vec3, Vec4, IVec3, Vec4Swizzles, i32::ivec3};
 
 const NULL_INDEX: u32 = 0xFFFFFFFF;
 const _POSITIVE_X: u32 = 0b001;
@@ -8,19 +8,19 @@ const _POSITIVE_Y: u32 = 0b010;
 const _POSITIVE_Z: u32 = 0b100;
 const OCTANT_COUNT: usize = 8;
 const OCTANT_LIST: [IVec3; 8] = 
-	[const_ivec3!([-1, -1, -1]),
-	const_ivec3!([1, -1, -1]),
-	const_ivec3!([-1, 1, -1]),
-	const_ivec3!([1, 1, -1]),
-	const_ivec3!([-1, -1, 1]),
-	const_ivec3!([1, -1, 1]),
-	const_ivec3!([-1, 1, 1]),
-	const_ivec3!([1, 1, 1]) ];
+	[ivec3(-1, -1, -1),
+	ivec3(1, -1, -1),
+	ivec3(-1, 1, -1),
+	ivec3(1, 1, -1),
+	ivec3(-1, -1, 1),
+	ivec3(1, -1, 1),
+	ivec3(-1, 1, 1),
+	ivec3(1, 1, 1),];
 const MASK_8BIT: u32 = 0x000000FF;
 
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash)]
 pub struct Octant {
 	pub index: u32, //index of the next node
 	pub colour: u32, //rgba
@@ -28,14 +28,14 @@ pub struct Octant {
 	pub extra: u32, // 8 shine, 8 radiance, 16 or 8 frames, 
 }
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash)]
 pub struct Node {
 	pub octants: [Octant; 8],
 }
 
 pub enum TestDagType {
-	BOX,
-	PILLAR,
+	Box,
+	Pillar,
 }
 
 pub struct OctDag {
@@ -58,8 +58,8 @@ pub enum ColourType {
 impl OctDag {
 	pub fn new_test(dag_type: TestDagType, max_depth: u32) -> Self {
 		if match dag_type {
-			TestDagType::BOX => { max_depth < 2 },
-			TestDagType::PILLAR => { max_depth < 4 },} 
+			TestDagType::Box => { max_depth < 2 },
+			TestDagType::Pillar => { max_depth < 4 },} 
 			|| max_depth > 16  {
 			panic!("depth out of bounds");
 		}
@@ -67,10 +67,10 @@ impl OctDag {
 		let mut dag = OctDag{nodes: Vec::<Node>::new()};
 		let mut level_list = Vec::<Vec::<u32>>::new();
 		let vol_list: &[(&dyn Fn(Vec3, f32) -> Vec4, &dyn Fn(IVec3, i32) -> Octant)] = match dag_type {
-			TestDagType::BOX => {
+			TestDagType::Box => {
 				&[(&vol_perim, &coloured_walls)]
 			},
-			TestDagType::PILLAR => {
+			TestDagType::Pillar => {
 				&[(&vol_perim, &tiled_spectrum), (&vol_planes_z, &depth_gradient_z), (&vol_pillar, &clear_blue)]
 			}
 		};
@@ -80,7 +80,7 @@ impl OctDag {
 		let next_level_size = i32::pow(2, max_depth - 1);
 		for i in 0..8 {
 			dag.nodes[0].octants[i] = dag.fill_oct( vol_list,
-				&mut level_list,  OCTANT_LIST[i] * IVec3::from([next_level_size; 3]), 1, max_depth); 
+				&mut level_list,  OCTANT_LIST[i] * IVec3::splat(next_level_size), 1, max_depth); 
 		}
 
 		return dag;
@@ -133,7 +133,7 @@ impl OctDag {
 			let next_depth = depth + 1;
 			let next_level_size = i32::pow(2, max_depth - next_depth);
 			for i in 0..8 {
-				node.octants[i] = self.fill_oct(volumes, level_list, pos + OCTANT_LIST[i] * IVec3::from([next_level_size; 3]), next_depth, max_depth);
+				node.octants[i] = self.fill_oct(volumes, level_list, pos + OCTANT_LIST[i] * IVec3::splat(next_level_size), next_depth, max_depth);
 			}
 
 			match level_list[depth as usize].iter().find(|x| {
@@ -230,10 +230,10 @@ impl OctDag {
 impl TestDagType {
 	pub fn new(&self, depth: usize) {
 		match self {
-			TestDagType::BOX => {
+			TestDagType::Box => {
 				todo!()
 			},
-			TestDagType::PILLAR => {
+			TestDagType::Pillar => {
 				todo!()
 			}
 		}	

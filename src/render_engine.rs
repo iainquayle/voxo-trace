@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, path::PathBuf};
 use pollster::FutureExt;
 use wgpu::{include_wgsl, util::DeviceExt};
 use glam::{Vec3, Vec4, UVec4};
@@ -101,8 +101,15 @@ pub struct RenderEngine {
 
 impl RenderEngine {
 	pub fn new(window: &Window, state: &LogicEngine) -> Self {
-		let instance = wgpu::Instance::new(wgpu::Backends::DX12);
-		let surface = unsafe{instance.create_surface(window.borrow_window())};
+		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor{
+			backends: wgpu::Backends::DX12,
+			dx12_shader_compiler: Default::default(),	
+			//dx12_shader_compiler: wgpu::Dx12Compiler::Dxc { 
+			//	dxil_path: Some(PathBuf::from("dxil.dll")),
+			//	dxc_path: Some(PathBuf::from("dxcompiler.dll")) 
+			//}, 
+		});
+		let surface = unsafe{instance.create_surface(window.borrow_window())}.expect("failed to create surface");
 
 		let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions{
 			power_preference: wgpu::PowerPreference::HighPerformance,
@@ -122,12 +129,18 @@ impl RenderEngine {
 			limits.max_compute_workgroup_storage_size,
 			wgpu::Limits::default().max_compute_workgroup_storage_size);
 		
+		let surface_capabilities = surface.get_capabilities(&adapter);
+		let surface_format = surface_capabilities.formats.iter().copied()
+			.filter(|f| f.describe().srgb)
+			.next().unwrap_or(surface_capabilities.formats[0]);
 		let surface_config = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
 			format: wgpu::TextureFormat::Rgba8Unorm,//surface.get_preferred_format(&adapter).unwrap()
 			width: window.inner_width(), 
 			height: window.inner_height(), 
 			present_mode: wgpu::PresentMode::Fifo,
+			alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+			view_formats: vec![],
 		};
 		surface.configure(&device, &surface_config);
 
@@ -163,6 +176,7 @@ impl RenderEngine {
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Rgba8Unorm,
 			usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+			view_formats: &[],
 		});
 		//returns buffers required to make one lane in double buffered pipline
 		//does not need to create the input uniform or buffers or the output texture
@@ -202,7 +216,7 @@ impl RenderEngine {
 		create view trace pipeline
 		TODO: this should be able to be turned into just a singular pipline layout, not differentiated as view trace
 		 */
-		let view_trace_shader = device.create_shader_module(&include_wgsl!(SHADERS_PATH!()));
+		let view_trace_shader = device.create_shader_module(include_wgsl!(SHADERS_PATH!()));
 		let view_trace_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("view trace pipline layout"),
 			push_constant_ranges: &[],
@@ -349,7 +363,7 @@ impl RenderEngine {
 		let mut view_trace_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("view trace pass")});
 		view_trace_pass.set_pipeline(&self.view_trace_pipeline);
 		view_trace_pass.set_bind_group(GROUP_INDEX, &self.view_trace_bindgroups[(self.frame_counter % 2) as usize], &[]);
-		view_trace_pass.dispatch(self.surface_config.width / WORK_GROUP_WIDTH, self.surface_config.height / WORK_GROUP_HEIGHT, 1);
+		view_trace_pass.dispatch_workgroups(self.surface_config.width / WORK_GROUP_WIDTH, self.surface_config.height / WORK_GROUP_HEIGHT, 1);
 
 		drop(view_trace_pass);
 

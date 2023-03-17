@@ -1,4 +1,4 @@
-use glam::{Vec3A, Vec3, const_vec3a};
+use glam::{Vec3A, Vec3};
 use std::time::{Instant};
 use winit::event::VirtualKeyCode;
 use crate::{oct_dag::OctDag, window::Window};
@@ -41,12 +41,12 @@ impl LogicEngine {
 			move_drag: 0.2,
 			
 			movement_keys: vec![
-				(VirtualKeyCode::W, const_vec3a!([0.0, 0.0, 1.0])),
-				(VirtualKeyCode::S, const_vec3a!([0.0, 0.0, -1.0])),
-				(VirtualKeyCode::A, const_vec3a!([-1.0, 0.0, 0.0])),
-				(VirtualKeyCode::D, const_vec3a!([1.0, 0.0, 0.0])),
-				(VirtualKeyCode::Space, const_vec3a!([0.0, 1.0, 0.0])),
-				(VirtualKeyCode::LShift, const_vec3a!([0.0, -1.0, 0.0])),
+				(VirtualKeyCode::W, Vec3A::new(0.0, 0.0, 1.0)),
+				(VirtualKeyCode::S, Vec3A::new(0.0, 0.0, -1.0)),
+				(VirtualKeyCode::A, Vec3A::new(-1.0, 0.0, 0.0)),
+				(VirtualKeyCode::D, Vec3A::new(1.0, 0.0, 0.0)),
+				(VirtualKeyCode::Space, Vec3A::new(0.0, 1.0, 0.0)),
+				(VirtualKeyCode::LShift, Vec3A::new(0.0, -1.0, 0.0)),
 			],
 
 			camera_pose: Default::default(),
@@ -63,7 +63,7 @@ impl LogicEngine {
 			for (keycode, force) in &self.movement_keys {
 				if window.key_pressed(keycode.clone()) {
 					//println!("here");
-					self.camera_pose.force += force.clone();
+					self.camera_pose.force += force.clone() * Vec3A::splat(self.move_speed);
 				}
 			}
 
@@ -89,7 +89,7 @@ impl LogicEngine {
 		rotated_force = Vec3A::new(rotated_force.x * self.camera_pose.yaw.cos() - rotated_force.z * self.camera_pose.yaw.sin(),
 			rotated_force.y,
 			rotated_force.z * self.camera_pose.yaw.cos() + rotated_force.x * self.camera_pose.yaw.sin());
-		self.camera_pose.velocity = Vec3A::from([self.move_drag; 3]) * (self.camera_pose.velocity + rotated_force);
+		self.camera_pose.velocity = Vec3A::splat(self.move_drag) * (self.camera_pose.velocity + rotated_force);
 		self.camera_pose.position += self.camera_pose.velocity;		
 	}
     
