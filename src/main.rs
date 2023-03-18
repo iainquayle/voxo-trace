@@ -8,14 +8,14 @@ use winit::{event::*,
 	platform::run_return::EventLoopExtRunReturn,};
 
 mod window;
-mod render_engine;
-mod logic_engine;
-mod oct_dag;
+mod render;
+mod logic;
+mod asset;
 mod io;
 
-use crate::{oct_dag::{OctDag, TestDagType},
-	logic_engine::LogicEngine,
-	render_engine::RenderEngine,
+use crate::{asset::oct_dag::{OctDag, TestDagType},
+	logic::logic::Logic,
+	render::render::Render,
 	window::Window};
 
 const WINDOW_WIDTH: u16 = 1920; 
@@ -27,10 +27,10 @@ fn main() {
 	let mut event_loop = EventLoop::new();
 	let mut window = Window::new(WINDOW_WIDTH, WINDOW_HEIGHT, &event_loop);	
 
-	let mut logic = LogicEngine::new(OctDag::new_test(TestDagType::Pillar, 9));
+	let mut logic = Logic::new(OctDag::new_test(TestDagType::Pillar, 8));
 	logic.dag.print_size();
 		
-	let mut render = RenderEngine::new(&window, &logic);
+	let mut render = Render::new(&window, &logic);
 	render.print_state();
 
 	event_loop.run_return(move |event, _, control_flow| {

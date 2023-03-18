@@ -18,15 +18,11 @@ struct StackEntry {
 
 struct ViewInput {
 	position: vec4<f32>, //x y z pad
-	radians: vec4<f32>, //yaw, pitch, roll, pad
-	light_position: vec4<f32>,
-	temporals: vec4<u32>, //time, frames
+	radians: vec4<f32>, //yaw, pitch, roll, fov 
 }
 struct LightInput {
 	position: vec4<f32>, //x y z pad
-	radians: vec4<f32>, //yaw, pitch, roll, pad
-	light_position: vec4<f32>,
-	temporals: vec4<u32>, //time, frames
+	radians: vec4<f32>, //yaw, pitch, roll, fov 
 }
 
 struct ViewData {

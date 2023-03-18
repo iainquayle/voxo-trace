@@ -2,7 +2,7 @@ use std::{fs::File, io::Write, path::PathBuf};
 use pollster::FutureExt;
 use wgpu::{include_wgsl, util::DeviceExt};
 use glam::{Vec3, Vec4, UVec4};
-use crate::{oct_dag::{Node}, logic_engine::LogicEngine, window::Window};
+use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window};
 
 
 const REPORT_AFTER_FRAMES: u64 = 500;
@@ -41,10 +41,6 @@ pub struct _TemporalInputData {
 pub struct ViewInputData {
 	pub pos: Vec4, //x, y, z, pad
 	pub rads: Vec4, //yaw, pitch, roll, pad(change to fov)
-	//TODO: find out if removing the below will break
-	pub light_pos: Vec4, //remove
-	//chnage so that the 2nd element is the fov, chnage name to something else?
-	pub temporals: UVec4, //time, frame, pad, pad
 }
 #[repr(C)]
 pub struct _LightInputData {
@@ -70,7 +66,7 @@ struct LightData {
 	pub _rgb: Vec3,
 }
 
-pub struct RenderEngine {
+pub struct Render {
 	surface: wgpu::Surface,
 	//instance: wgpu::Instance,
 	adapter: wgpu::Adapter,
@@ -99,8 +95,8 @@ pub struct RenderEngine {
 	min_frame_time: u128,	
 }
 
-impl RenderEngine {
-	pub fn new(window: &Window, state: &LogicEngine) -> Self {
+impl Render {
+	pub fn new(window: &Window, state: &Logic) -> Self {
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor{
 			backends: wgpu::Backends::DX12,
 			dx12_shader_compiler: Default::default(),	
@@ -313,7 +309,7 @@ impl RenderEngine {
 		*/
 
 
-		return RenderEngine {
+		return Self {
 			surface: surface,
 			//instance: instance,
 			adapter: adapter,
@@ -350,12 +346,10 @@ impl RenderEngine {
 	 *consider changing to not returning a result
 	 *take away the question mark below and just us an expect
 	 */
-	pub fn render(&mut self, state: &LogicEngine) -> Result<(), wgpu::SurfaceError> {
+	pub fn render(&mut self, state: &Logic) -> Result<(), wgpu::SurfaceError> {
 			self.update_camera(ViewInputData { 
-			pos: Into::<Vec4>::into((state.camera_pose().position, 0.0)),
-			rads: Into::<Vec4>::into((state.camera_orientaion_vec3(), 0.0)),
-			light_pos: Vec4::ZERO,
-			temporals: UVec4::new(state.start_time.elapsed().as_millis() as u32, self.frame_counter as u32, 0, 0),
+					pos: Into::<Vec4>::into((state.camera_pose().position, 0.0)),
+					rads: Into::<Vec4>::into((state.camera_orientaion_vec3(), 0.0)),
 			});
 
 		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label: Some("view trace render pass encoder")});

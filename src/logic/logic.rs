@@ -1,7 +1,7 @@
 use glam::{Vec3A, Vec3};
 use std::time::{Instant};
 use winit::event::VirtualKeyCode;
-use crate::{oct_dag::OctDag, window::Window};
+use crate::{asset::oct_dag::OctDag, window::Window};
 
 #[derive(Default, Clone, Copy)]
 pub struct CameraPose {
@@ -13,7 +13,7 @@ pub struct CameraPose {
 	pub pitch: f32, 
 	pub roll: f32,
 }
-pub struct LogicEngine {
+pub struct Logic {
 	pub dag: OctDag,
 	pub start_time: Instant,
 	last_time: u64,
@@ -29,9 +29,9 @@ pub struct LogicEngine {
 
 }
 
-impl LogicEngine {
+impl Logic {
 	pub fn new(dag: OctDag) -> Self {
-		return LogicEngine { 
+		return Self { 
 			dag: dag,
 			start_time: Instant::now(),
 			last_time: 0,

@@ -15,7 +15,7 @@ pub struct Window {
 
 impl Window {
 	pub fn new(width: u16, height: u16, event_loop: &EventLoop<()>) -> Self {
-		Window {
+		Self {
 			window: WindowBuilder::new()
 				.with_inner_size(PhysicalSize::new(width, height))
 				.with_title("VoxoTrace")
