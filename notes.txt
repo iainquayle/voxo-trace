@@ -1,6 +1,10 @@
-writing to storage buffer and reading back ad if in terms of 2d shouldnt be any issue
-create transaltion function that takes in the pixewl coordinates
-check with the compute shader examplle to figure out writing to buffer?
+possibilty: split the tree structure and the node data
+	this will massivley help reuse data nodes by allowing level agnostic nodes
+	ever tree node has a tree indexing array for sure
+	two options to this: 
+		data nodes hold 8 chunks of information, and each tree node only references one - preferable?
+		data nodes hold information for only one octant, and tree holds array reference each indiviually
+
 
 TODO: find a solution using info below
 optimal for 3080 is using 8x4 workgroup and fifo. still worried that the extreme lows come from the prior frame running too fast????

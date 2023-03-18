@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{mem::size_of};
 extern crate glam;
 use glam::{Vec3, Vec4, IVec3, Vec4Swizzles, i32::ivec3};
 
@@ -21,6 +21,25 @@ const MASK_8BIT: u32 = 0x000000FF;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Hash)]
+struct NewNode {
+	pub tree_indices: [u32; 8],
+	pub volume_index: u32, 
+}
+struct Volume<T> {
+	pub volume: [T; 8],
+}
+struct NewOctant {
+	pub colour: u32, //rgba
+	pub normal: u32, //xyz desnity //change name to volume, or physical
+	pub extra: u32, // 8 shine, 8 radiance, 16 or 8 frames, 
+}
+struct Dag<T> {
+	pub nodes: Vec<NewNode>,
+	pub volumes: Vec<Volume<T>>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Hash)]
 pub struct Octant {
 	pub index: u32, //index of the next node
 	pub colour: u32, //rgba
@@ -30,7 +49,10 @@ pub struct Octant {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Node {
-	pub octants: [Octant; 8],
+	pub octants: [Octant; OCTANT_COUNT],
+}
+pub struct OctDag {
+	pub nodes: Vec<Node>,
 }
 
 pub enum TestDagType {
@@ -38,42 +60,31 @@ pub enum TestDagType {
 	Pillar,
 }
 
-pub struct OctDag {
-	pub nodes: Vec<Node>,
-}
-
+#[derive(Clone, Copy)]
 pub enum VolumeType{
 	Perimiter,
 	Plane,
 	Pillar,
 }
+#[derive(Clone, Copy)]
 pub enum ColourType {
 	TiledSpectrum,
 	RedZGradient,
 	ClearBlue, 
+	ColouredWalls,
 }
 
 //TODO: consider making fn that creates u8 representation of data for render
 //TODO: consider making it possible to generate each virst octant in seperate threads
 impl OctDag {
 	pub fn new_test(dag_type: TestDagType, max_depth: u32) -> Self {
-		if match dag_type {
-			TestDagType::Box => { max_depth < 2 },
-			TestDagType::Pillar => { max_depth < 4 },} 
-			|| max_depth > 16  {
+		if max_depth > 16  {
 			panic!("depth out of bounds");
 		}
 		
 		let mut dag = OctDag{nodes: Vec::<Node>::new()};
 		let mut level_list = Vec::<Vec::<u32>>::new();
-		let vol_list: &[(&dyn Fn(Vec3, f32) -> Vec4, &dyn Fn(IVec3, i32) -> Octant)] = match dag_type {
-			TestDagType::Box => {
-				&[(&vol_perim, &coloured_walls)]
-			},
-			TestDagType::Pillar => {
-				&[(&vol_perim, &tiled_spectrum), (&vol_planes_z, &depth_gradient_z), (&vol_pillar, &clear_blue)]
-			}
-		};
+		let vol_list = dag_type.new(max_depth);
 		level_list.resize((max_depth) as usize, Vec::<u32>::new());
 		dag.nodes.push(Node::new());
 
@@ -87,7 +98,7 @@ impl OctDag {
 	}
 
 
-	fn fill_oct(&mut self, volumes: &[(&dyn Fn(Vec3, f32) -> Vec4, &dyn Fn(IVec3, i32) -> Octant)], 
+	fn fill_oct(&mut self, volumes: &[(VolumeType, ColourType)], 
 		level_list: &mut Vec<Vec<u32>>, 
 		pos: IVec3, 
 		depth: u32, 
@@ -103,9 +114,9 @@ impl OctDag {
 		find the deepest and store it and the associated colour function
 		 */
 		let mut funcs = volumes[0];
-		let mut max_vol = volumes[0].0(pos.as_vec3(), max_level_size as f32);
+		let mut max_vol = volumes[0].0.new(pos.as_vec3(), max_level_size as f32);
 		for i in volumes {
-			let vol = i.0(pos.as_vec3(), max_level_size as f32);
+			let vol = i.0.new(pos.as_vec3(), max_level_size as f32);
 			if vol.x < max_vol.x {
 				funcs = *i;
 				max_vol = vol;
@@ -118,7 +129,7 @@ impl OctDag {
 
 		if max_vol.x < -1.0 || (depth == max_depth && max_vol.x <= 1.0) {
 			//calling colour function
-			octant = funcs.1(pos, max_level_size);
+			octant = funcs.1.new(pos, max_level_size);
 
 			let norm_len = max_vol.yzw().length();
 			max_vol.y /= norm_len;
@@ -226,45 +237,118 @@ impl OctDag {
 	}
 }
 
+impl Octant {
+	pub fn difference(&self, other: &Self) -> i32 {
+		//if self.index == other.index {0}
+		todo!()
+	}
+}
+
+
+
 impl TestDagType {
-	pub fn new(&self, depth: usize) {
+	pub fn new(&self, depth: u32) -> &[(VolumeType, ColourType)] {
 		match self {
 			TestDagType::Box => {
-				todo!()
+				if depth < 2 {
+					panic!();
+				}
+				&[(VolumeType::Perimiter, ColourType::ColouredWalls)]
 			},
 			TestDagType::Pillar => {
-				todo!()
+				if depth < 4 {
+					panic!();
+				}
+				&[(VolumeType::Perimiter, ColourType::TiledSpectrum), (VolumeType::Plane, ColourType::RedZGradient), (VolumeType::Pillar, ColourType::ClearBlue)]
 			}
 		}	
 	}
 }
 impl VolumeType {
-	pub fn new(&self, pos: Vec3, max_depth: usize) -> Vec4 {
+	pub fn new(&self, pos: Vec3, max_level_size: f32) -> Vec4 {
 		match self {
 			VolumeType::Perimiter => {
-				todo!();				
+				let mut dist = f32::abs(pos.x);
+				let mut norm = Vec3::new(1.0, 0.0, 0.0);
+				if pos.x < 0.0 {
+					norm = Vec3::new(1.0, 0.0, 0.0);
+				}
+				if f32::abs(pos.y) > dist {
+					dist = f32::abs(pos.y);
+					norm = Vec3::new(0.0, 1.0, 0.0);
+					if pos.x < 0.0 {
+						norm = Vec3::new(0.0, 1.0, 0.0);
+					}
+				}
+				if f32::abs(pos.z) > dist {
+					dist = f32::abs(pos.z);
+					norm = Vec3::new(0.0, 0.0, 1.0);
+					if pos.x < 0.0 {
+						norm = Vec3::new(0.0, 0.0, 1.0);
+					}
+				}
+				Vec4::new(max_level_size - dist - 1.0, norm.x, norm.y, norm.z)
 			}, 
 			VolumeType::Pillar => {
-				todo!();				
+				let disp = (pos.x + (max_level_size * 0.5), pos.y, pos.z );
+				Vec4::new(f32::sqrt((pos.x + (max_level_size * 0.5)).powi(2) + pos.z.powi(2)) - max_level_size * 0.2, disp.0, disp.1, disp.2)
 			}, 
 			VolumeType::Plane => {
-				todo!();				
+				let plane1 = Vec3::new(1.0, 1.0, 10.0);
+				let z = (((pos.x * plane1.x + pos.y * plane1.y) / plane1.z) + max_level_size) - pos.z;
+				Vec4::new(z, plane1.x, plane1.y, plane1.z)
 			}, 
 		}
 	} 
 }
 impl ColourType {
-	pub fn new(&self, pos: IVec3, max_depth: usize) -> Vec4 {
+	pub fn new(&self, pos: IVec3, max_level_size: i32) -> Octant {
 		match self {
 			ColourType::TiledSpectrum => {
-				todo!();				
+				let mut octant = Octant::new();
+				let mut tiling_pos= IVec3::new(0, 0, 0);
+
+				tiling_pos.x = if pos.x >= 0 {pos.x} else {max_level_size as i32 + pos.x};
+				tiling_pos.y = if pos.y >= 0 {pos.y} else {max_level_size as i32 + pos.y};
+				tiling_pos.z = if pos.z >= 0 {pos.z} else {max_level_size as i32 + pos.z};
+
+				let r: u8 = (tiling_pos.x * 255 / max_level_size) as u8;
+				let g: u8 = (tiling_pos.y * 255 / max_level_size) as u8;
+				let b: u8 = (tiling_pos.z * 255 / max_level_size) as u8;
+				let a: u8 = 255;
+				octant.colour = ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32);
+
+				return octant;
 			}, 
 			ColourType::RedZGradient => {
-				todo!();				
+				let mut octant = Octant::new();
+
+				let r: u8 = (pos.z * 255 / max_level_size) as u8;
+				let g: u8 = 50 as u8;
+				let b: u8 = 50 as u8;
+				let a: u8 = 255;
+				octant.colour = ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32);
+
+				return octant;
 			}, 
 			ColourType::ClearBlue => {
-				todo!();				
+				let mut octant = Octant::new();
+				octant.colour = pack_f32_u32(Vec4::new(0.1, 0.1, 0.5, 0.01));
+				return octant;
 			}, 
+			ColourType::ColouredWalls => {
+				let mut octant = Octant::new();
+				octant.colour = pack_f32_u32(Vec4::new(1.0, 0.0, 0.0, 1.0));
+				let mut dist = i32::abs(pos.x);
+				if i32::abs(pos.y) > dist {
+					octant.colour = pack_f32_u32(Vec4::new(0.0, 1.0, 0.0, 1.0));
+					dist = i32::abs(pos.y);
+				}
+				if i32::abs(pos.z) > dist {
+					octant.colour = pack_f32_u32(Vec4::new(0.0, 0.0, 1.0, 1.0));
+				}
+				return octant;
+			}
 		}
 	} 
 }
@@ -274,90 +358,6 @@ positive values are considered to be inside a volume
 they do not need to be bound at or below 1
 len should be in relation to the level size tho, so long as it uses the pos
  */
-fn vol_pillar(pos: Vec3, max_level_size: f32) -> Vec4 {
-	let disp = (pos.x + (max_level_size * 0.5), pos.y, pos.z );
-	Vec4::new(f32::sqrt((pos.x + (max_level_size * 0.5)).powi(2) + pos.z.powi(2)) - max_level_size * 0.2, disp.0, disp.1, disp.2)
-}
-fn vol_planes_z(pos: Vec3, max_level_size: f32) -> Vec4 {
-	let plane1 = Vec3::new(1.0, 1.0, 10.0);
-	let z = (((pos.x * plane1.x + pos.y * plane1.y) / plane1.z) + max_level_size) - pos.z;
-	//let dist = f32::abs(pos.x * plane1.0 + pos.y * plane1.1 + pos.z * plane1.2)/f32::sqrt(plane1.0.powi(2) + plane1.1.powi(2) + plane1.2.powi(2));
-	Vec4::new(z, plane1.x, plane1.y, plane1.z)
-}
-/*
-change to multiple returns
- */
-fn vol_perim(pos: Vec3, max_level_size: f32) -> Vec4 {
-	let mut dist = f32::abs(pos.x);
-	let mut norm = Vec3::new(1.0, 0.0, 0.0);
-	if pos.x < 0.0 {
-		norm = Vec3::new(1.0, 0.0, 0.0);
-	}
-	if f32::abs(pos.y) > dist {
-		dist = f32::abs(pos.y);
-		norm = Vec3::new(0.0, 1.0, 0.0);
-		if pos.x < 0.0 {
-			norm = Vec3::new(0.0, 1.0, 0.0);
-		}
-	}
-	if f32::abs(pos.z) > dist {
-		dist = f32::abs(pos.z);
-		norm = Vec3::new(0.0, 0.0, 1.0);
-		if pos.x < 0.0 {
-			norm = Vec3::new(0.0, 0.0, 1.0);
-		}
-	}
-	Vec4::new(max_level_size - dist - 1.0, norm.x, norm.y, norm.z)
-}
-/*fn vol_wave_perim(pos: Vec3, max_level_size: f32) -> Vec4 { 
-	todo!()
-}*/
-fn depth_gradient_z(pos: IVec3, max_level_size: i32) -> Octant {
-	let mut octant = Octant::new();
-
-	let r: u8 = (pos.z * 255 / max_level_size) as u8;
-	let g: u8 = 50 as u8;
-	let b: u8 = 50 as u8;
-	let a: u8 = 255;
-	octant.colour = ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32);
-
-	return octant;
-}
-fn tiled_spectrum(pos: IVec3, max_level_size: i32) -> Octant {
-	let mut octant = Octant::new();
-	let mut tiling_pos= IVec3::new(0, 0, 0);
-
-	tiling_pos.x = if pos.x >= 0 {pos.x} else {max_level_size as i32 + pos.x};
-	tiling_pos.y = if pos.y >= 0 {pos.y} else {max_level_size as i32 + pos.y};
-	tiling_pos.z = if pos.z >= 0 {pos.z} else {max_level_size as i32 + pos.z};
-
-	let r: u8 = (tiling_pos.x * 255 / max_level_size) as u8;
-	let g: u8 = (tiling_pos.y * 255 / max_level_size) as u8;
-	let b: u8 = (tiling_pos.z * 255 / max_level_size) as u8;
-	let a: u8 = 255;
-	octant.colour = ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32);
-
-	return octant;
-}
-fn clear_blue(pos: IVec3, max_level_size: i32)  -> Octant {
-	let mut octant = Octant::new();
-	octant.colour = pack_f32_u32(Vec4::new(0.1, 0.1, 0.5, 0.01));
-	return octant;
-}
-fn coloured_walls(pos: IVec3, max_level_size: i32)  -> Octant {
-	let mut octant = Octant::new();
-	octant.colour = pack_f32_u32(Vec4::new(1.0, 0.0, 0.0, 1.0));
-	let mut dist = i32::abs(pos.x);
-	if i32::abs(pos.y) > dist {
-		octant.colour = pack_f32_u32(Vec4::new(0.0, 1.0, 0.0, 1.0));
-		dist = i32::abs(pos.y);
-	}
-	if i32::abs(pos.z) > dist {
-		octant.colour = pack_f32_u32(Vec4::new(0.0, 0.0, 1.0, 1.0));
-	}
-	return octant;
-}
-
 fn unpack_f32_u32(data: u32) -> Vec4 {
 	let bytes = unpack_u8_u32(data);
 	Vec4::new(bytes.0 as f32 / 255.0, bytes.1 as f32 / 255.0, bytes.2 as f32 / 255.0, bytes.3 as f32 / 255.0)

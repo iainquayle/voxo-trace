@@ -70,6 +70,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 	let direction_vec: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.radians.xyz));
 	let inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction_vec;
+	//can make center an integer if need be if stack entries become index type
 	var center: vec3<f32> = vec3<f32>(0.0);
 	var position: vec3<f32> = camera.position.xyz; //rays position
 
@@ -159,6 +160,8 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			//if statment required so that NANs do not proliferate in position
 			if(moving_up) {
 				center = stack[depth].center;
+				//can use if need to switch the stack entries
+				//center = center + level_size * (-1.0 + 2.0 * vec3<f32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 			} else {
 				position = next_position;
 			}
