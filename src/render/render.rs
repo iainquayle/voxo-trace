@@ -1,6 +1,13 @@
-use std::{fs::File, io::Write, path::PathBuf};
+use std::{fs::File, io::Write};
 use pollster::FutureExt;
-use wgpu::{include_wgsl, util::DeviceExt};
+use wgpu::{include_wgsl, util::{DeviceExt, BufferInitDescriptor}, Surface, Adapter, Device, Queue, 
+	SurfaceConfiguration, BufferDescriptor, BufferUsages, Instance, Backends, PowerPreference, Features, Limits,
+	TextureUsages, TextureFormat, PresentMode, CompositeAlphaMode, DeviceDescriptor, RequestAdapterOptions,
+	InstanceDescriptor, ComputePipeline, BindGroup, Texture, Buffer, TextureDescriptor, Extent3d, 
+	TextureDimension, PipelineLayoutDescriptor, BindGroupLayoutDescriptor, BindGroupLayoutEntry, 
+	ShaderStages, BindingType, BufferBindingType, Backend, StorageTextureAccess, TextureViewDimension, 
+	ComputePipelineDescriptor, BindGroupDescriptor, BindGroupEntry, BindingResource, SurfaceError, 
+	CommandEncoderDescriptor, ComputePassDescriptor, ImageCopyTexture, TextureAspect, Origin3d};
 use glam::{Vec3, Vec4, UVec4};
 use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window};
 
@@ -66,25 +73,28 @@ struct LightData {
 	pub _rgb: Vec3,
 }
 
+
+struct RenderAgnostics {
+	pub surface: Surface,
+	pub adapter: Adapter,
+	pub device: Device,
+	pub queue: Queue,
+	pub surface_config: SurfaceConfiguration,
+} 
 pub struct Render {
-	surface: wgpu::Surface,
-	//instance: wgpu::Instance,
-	adapter: wgpu::Adapter,
-	device: wgpu::Device,
-	queue: wgpu::Queue,
-	surface_config: wgpu::SurfaceConfiguration,
+	agnostics: RenderAgnostics,
 
 	//compute_shader:
-	//view_trace_layout: wgpu::PipelineLayout,
-	view_trace_pipeline: wgpu::ComputePipeline,
+	//view_trace_layout: PipelineLayout,
+	view_trace_pipeline: ComputePipeline,
 
 	//view trace bind groups ran in parallel for final shading synchronization
-	view_trace_bindgroups: [wgpu::BindGroup; 2],
-	//output_view: wgpu::TextureView,
+	view_trace_bindgroups: [BindGroup; 2],
+	//output_view: TextureView,
 
-	//dag_buffer: wgpu::Buffer,
-	view_input_uniform: wgpu::Buffer,
-	output_texture: wgpu::Texture,
+	//dag_buffer: Buffer,
+	view_input_uniform: Buffer,
+	output_texture: Texture,
 
 	//camera: ViewInputData,
 	frame_counter: u64,
@@ -97,91 +107,45 @@ pub struct Render {
 
 impl Render {
 	pub fn new(window: &Window, state: &Logic) -> Self {
-		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor{
-			backends: wgpu::Backends::DX12,
-			dx12_shader_compiler: Default::default(),	
-			//dx12_shader_compiler: wgpu::Dx12Compiler::Dxc { 
-			//	dxil_path: Some(PathBuf::from("dxil.dll")),
-			//	dxc_path: Some(PathBuf::from("dxcompiler.dll")) 
-			//}, 
-		});
-		let surface = unsafe{instance.create_surface(window.borrow_window())}.expect("failed to create surface");
+		let agnostics = RenderAgnostics::new(window);
 
-		let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions{
-			power_preference: wgpu::PowerPreference::HighPerformance,
-			compatible_surface: Some(&surface),
-			force_fallback_adapter: false,
-		}).block_on().expect("Fail to find suitable adapter");
-		
-		let limits = adapter.limits();
-		let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor{
-			features: wgpu::Features::default(),
-			//limits: wgpu::Limits{max_compute_workgroup_storage_size: 24000, ..Default::default()},
-			limits: wgpu::Limits{..Default::default()},
-			label: Some("device"),
-		}, None).block_on().expect("failed to create device and queue");
-
-		println!("max workgroup storage: {}\ndefault limit: {}",
-			limits.max_compute_workgroup_storage_size,
-			wgpu::Limits::default().max_compute_workgroup_storage_size);
-		
-		let surface_capabilities = surface.get_capabilities(&adapter);
-		let surface_format = surface_capabilities.formats.iter().copied()
-			.filter(|f| f.describe().srgb)
-			.next().unwrap_or(surface_capabilities.formats[0]);
-		let surface_config = wgpu::SurfaceConfiguration {
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
-			format: wgpu::TextureFormat::Rgba8Unorm,//surface.get_preferred_format(&adapter).unwrap()
-			width: window.inner_width(), 
-			height: window.inner_height(), 
-			present_mode: wgpu::PresentMode::Fifo,
-			alpha_mode: wgpu::CompositeAlphaMode::Opaque,
-			view_formats: vec![],
-		};
-		surface.configure(&device, &surface_config);
-
-
-
-		/*
-		create buffers
-		 */
 		let byte_dag_array = unsafe{std::slice::from_raw_parts(state.dag.nodes[..].as_ptr() as *const u8,
 			std::mem::size_of::<Node>() * state.dag.nodes.len())};
 		//must have trait POD on it, however that allows for things like bit fiddling
 		//let byte_dag_arr = bytemuck::bytes_of(&state.dag.nodes);
-		let dag_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+		let dag_buffer = agnostics.device.create_buffer_init(&BufferInitDescriptor{
 			label: Some("dag buffer"),
-			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+			usage: BufferUsages::COPY_DST | BufferUsages::STORAGE,
 			contents: byte_dag_array,
 		});
-		let view_input_uniform = device.create_buffer( &wgpu::BufferDescriptor {
+		let view_input_uniform = agnostics.device.create_buffer( &BufferDescriptor {
 			label: Some(" buffer"),
 			mapped_at_creation: false,
-			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+			usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
 			size: std::mem::size_of::<ViewInputData>() as u64,
 		});
-		let output_texture = device.create_texture(&wgpu::TextureDescriptor {
+		let output_texture = agnostics.device.create_texture(&TextureDescriptor {
 			label: Some("output texture"),
-			size: wgpu::Extent3d {
+			size: Extent3d {
 				width: window.inner_width(),
 				height: window.inner_height(), 
 				depth_or_array_layers: 1,
 			},
 			mip_level_count: 1,
 			sample_count: 1,
-			dimension: wgpu::TextureDimension::D2,
-			format: wgpu::TextureFormat::Rgba8Unorm,
-			usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+			dimension: TextureDimension::D2,
+			format: TextureFormat::Rgba8Unorm,
+			usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
 			view_formats: &[],
 		});
 		//returns buffers required to make one lane in double buffered pipline
 		//does not need to create the input uniform or buffers or the output texture
-		let create_parallel_buffers = || {
+		let (view_buffers, _light_buffers)  = { 
 			let create_buffer = |size: usize| {
-				device.create_buffer( &wgpu::BufferDescriptor {
+				agnostics.device.create_buffer( &BufferDescriptor {
 					label: Some("view data buffer"),
 					mapped_at_creation: false,
-					usage: wgpu::BufferUsages::STORAGE,
+					usage: BufferUsages::STORAGE,
 					size: size as u64,
 				})
 			};
@@ -190,11 +154,11 @@ impl Render {
 			should be ok since the buffer can be treated as a muti dimensionsonal array once it is in the shader
 			 */
 
-			([create_buffer((surface_config.height 
-					* surface_config.width 
+			([create_buffer((agnostics.surface_config.height 
+					* agnostics.surface_config.width 
 					* std::mem::size_of::<ViewData>() as u32) as usize),
-			create_buffer((surface_config.height 
-					* surface_config.width 
+			create_buffer((agnostics.surface_config.height 
+					* agnostics.surface_config.width 
 					* std::mem::size_of::<ViewData>() as u32) as usize)], 
 			[create_buffer((LIGHT_TEXTURE_WIDTH 
 					* LIGHT_TEXTURE_HEIGHT 
@@ -203,68 +167,49 @@ impl Render {
 					* LIGHT_TEXTURE_HEIGHT 
 					* std::mem::size_of::<LightData>() as u32) as usize)])
 		};
-		let (view_buffers, _light_buffers) = create_parallel_buffers();
-
-
-		
 		
 		/*
 		create view trace pipeline
 		TODO: this should be able to be turned into just a singular pipline layout, not differentiated as view trace
 		 */
-		let view_trace_shader = device.create_shader_module(include_wgsl!(SHADERS_PATH!()));
-		let view_trace_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+		let view_trace_shader = agnostics.device.create_shader_module(include_wgsl!(SHADERS_PATH!()));
+		let view_trace_layout = {
+			let buffer_entry = |binding_index: u32, buffer_type: BufferBindingType| {
+				BindGroupLayoutEntry {
+					binding: binding_index,
+					visibility: ShaderStages::COMPUTE,
+					ty: BindingType::Buffer { 
+						ty: buffer_type, 
+						has_dynamic_offset: false, 
+						min_binding_size: None, 
+					},
+					count: None,
+			}};
+			agnostics.device.create_pipeline_layout(&PipelineLayoutDescriptor {
 			label: Some("view trace pipline layout"),
 			push_constant_ranges: &[],
 			bind_group_layouts: &[
-				&device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+				&agnostics.device.create_bind_group_layout(&BindGroupLayoutDescriptor {
 					label: Some("view trace bind group layout"),
 					entries: &[
-						wgpu::BindGroupLayoutEntry {
-							binding: DAG_INDEX,
-							visibility: wgpu::ShaderStages::COMPUTE,
-							ty: wgpu::BindingType::Buffer { 
-								ty: wgpu::BufferBindingType::Storage { read_only: true }, 
-								has_dynamic_offset: false, 
-								min_binding_size: None, 
-							},
-							count: None,
-						},
-						wgpu::BindGroupLayoutEntry {
-							binding: VIEW_TRACE_INPUT_INDEX,
-							visibility: wgpu::ShaderStages::COMPUTE,
-							ty : wgpu::BindingType::Buffer { 
-								ty: wgpu::BufferBindingType::Uniform, 
-								has_dynamic_offset: false, 
-								min_binding_size: None,
-							},
-							count: None,
-						},
-						wgpu::BindGroupLayoutEntry {
-							binding: VIEW_DATA_INDEX,
-							visibility: wgpu::ShaderStages::COMPUTE,
-							ty: wgpu::BindingType::Buffer { 
-								ty: wgpu::BufferBindingType::Storage { read_only: false }, 
-								has_dynamic_offset: false, 
-								min_binding_size: None 
-							},
-							count: None,
-						},
-						wgpu::BindGroupLayoutEntry {
+						buffer_entry(DAG_INDEX, BufferBindingType::Storage { read_only: true }),
+						buffer_entry(VIEW_TRACE_INPUT_INDEX, BufferBindingType::Uniform),
+						buffer_entry(VIEW_DATA_INDEX, BufferBindingType::Storage { read_only: false }),
+						BindGroupLayoutEntry {
 							binding: OUTPUT_TEXTURE_INDEX,
-							visibility: wgpu::ShaderStages::COMPUTE,
-							ty: wgpu::BindingType::StorageTexture { 
-								access: wgpu::StorageTextureAccess::WriteOnly, 
-								format: wgpu::TextureFormat::Rgba8Unorm, 
-								view_dimension: wgpu::TextureViewDimension::D2 
+							visibility: ShaderStages::COMPUTE,
+							ty: BindingType::StorageTexture { 
+								access: StorageTextureAccess::WriteOnly, 
+								format: TextureFormat::Rgba8Unorm, 
+								view_dimension: TextureViewDimension::D2 
 							},
 							count: None,
 						},
 					],
 				}),
 			],
-		});
-		let view_trace_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+		})};
+		let view_trace_pipeline = agnostics.device.create_compute_pipeline(&ComputePipelineDescriptor {
 			label: Some("view trace pipeline"),
 			layout: Some(&view_trace_layout),
 			module: &view_trace_shader,
@@ -275,26 +220,26 @@ impl Render {
 
 		/*
 		 */
-		let create_view_trace_bindgroup = |view: &wgpu::Buffer| {
-			device.create_bind_group(&wgpu::BindGroupDescriptor {
+		let create_view_trace_bindgroup = |view: &Buffer| {
+			agnostics.device.create_bind_group(&BindGroupDescriptor {
 				label: Some("view trace bindgroup"),
 				layout: &view_trace_pipeline.get_bind_group_layout(GROUP_INDEX),
 				entries: &[
-					wgpu::BindGroupEntry {
+					BindGroupEntry {
 						binding: DAG_INDEX,
 						resource: dag_buffer.as_entire_binding(),
 					},
-					wgpu::BindGroupEntry {
+					BindGroupEntry {
 						binding: VIEW_TRACE_INPUT_INDEX,
 						resource: view_input_uniform.as_entire_binding(),
 					},
-					wgpu::BindGroupEntry {
+					BindGroupEntry {
 						binding: VIEW_DATA_INDEX,
 						resource: view.as_entire_binding(),
 					},
-					wgpu::BindGroupEntry {
+					BindGroupEntry {
 						binding: OUTPUT_TEXTURE_INDEX,
-						resource: wgpu::BindingResource::TextureView(&output_texture.create_view(&wgpu::TextureViewDescriptor::default())),
+						resource: BindingResource::TextureView(&output_texture.create_view(&wgpu::TextureViewDescriptor::default())),
 					},
 				],
 			})
@@ -310,12 +255,7 @@ impl Render {
 
 
 		return Self {
-			surface: surface,
-			//instance: instance,
-			adapter: adapter,
-			device: device,
-			queue: queue,
-			surface_config: surface_config,
+         agnostics: agnostics,
 
 			view_trace_pipeline: view_trace_pipeline,
 			view_trace_bindgroups: view_trace_bindgroups,
@@ -346,39 +286,39 @@ impl Render {
 	 *consider changing to not returning a result
 	 *take away the question mark below and just us an expect
 	 */
-	pub fn render(&mut self, state: &Logic) -> Result<(), wgpu::SurfaceError> {
+	pub fn render(&mut self, state: &Logic) -> Result<(), SurfaceError> {
 			self.update_camera(ViewInputData { 
 					pos: Into::<Vec4>::into((state.camera_pose().position, 0.0)),
 					rads: Into::<Vec4>::into((state.camera_orientaion_vec3(), 0.0)),
 			});
 
-		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label: Some("view trace render pass encoder")});
+		let mut encoder = self.agnostics.device.create_command_encoder(&CommandEncoderDescriptor{label: Some("view trace render pass encoder")});
 		
-		let mut view_trace_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("view trace pass")});
+		let mut view_trace_pass = encoder.begin_compute_pass(&ComputePassDescriptor { label: Some("view trace pass")});
 		view_trace_pass.set_pipeline(&self.view_trace_pipeline);
 		view_trace_pass.set_bind_group(GROUP_INDEX, &self.view_trace_bindgroups[(self.frame_counter % 2) as usize], &[]);
-		view_trace_pass.dispatch_workgroups(self.surface_config.width / WORK_GROUP_WIDTH, self.surface_config.height / WORK_GROUP_HEIGHT, 1);
+		view_trace_pass.dispatch_workgroups(self.agnostics.surface_config.width / WORK_GROUP_WIDTH, self.agnostics.surface_config.height / WORK_GROUP_HEIGHT, 1);
 
 		drop(view_trace_pass);
 
 
-		let surface_texture = self.surface.get_current_texture()?;
+		let surface_texture = self.agnostics.surface.get_current_texture()?;
 		encoder.copy_texture_to_texture(
-			wgpu::ImageCopyTexture {
-				aspect: wgpu::TextureAspect::All,
+			ImageCopyTexture {
+				aspect: TextureAspect::All,
 				texture: &self.output_texture,
 				mip_level: 0,
-				origin: wgpu::Origin3d::ZERO,
+				origin: Origin3d::ZERO,
 			},
-			wgpu::ImageCopyTexture {
-				aspect: wgpu::TextureAspect::All,
+			ImageCopyTexture {
+				aspect: TextureAspect::All,
 				texture: &surface_texture.texture,
 				mip_level: 0,
-				origin: wgpu::Origin3d::ZERO,
+				origin: Origin3d::ZERO,
 			},
-			wgpu::Extent3d {
-				width: self.surface_config.width,
-				height: self.surface_config.height,
+			Extent3d {
+				width: self.agnostics.surface_config.width,
+				height: self.agnostics.surface_config.height,
 				depth_or_array_layers: 1,
 			},
 		);
@@ -392,7 +332,7 @@ impl Render {
 		//if wnating to make a multi stage rendering process, create second encoder, and submitt both at once
 		//the second will need to operate on data given by the previous iteration rather than the same
 		self.previous_frame_time = state.start_time.elapsed().as_micros();
-		self.queue.submit(std::iter::once(encoder.finish()));
+		self.agnostics.queue.submit(std::iter::once(encoder.finish()));
 		surface_texture.present();
 		let frame_time = state.start_time.elapsed().as_micros() - self.previous_frame_time;
 		
@@ -428,22 +368,77 @@ impl Render {
 	pub fn update_dag(&mut self) {}
 
 	pub fn update_camera(&mut self, pos: ViewInputData) {
-		self.queue.write_buffer(&self.view_input_uniform, 0, unsafe{ std::slice::from_raw_parts((&pos as *const ViewInputData) as *const u8, std::mem::size_of::<ViewInputData>()) });
+		self.agnostics.queue.write_buffer(&self.view_input_uniform, 0, unsafe{ std::slice::from_raw_parts((&pos as *const ViewInputData) as *const u8, std::mem::size_of::<ViewInputData>()) });
 	}
 
 
 	pub fn print_state(&self) {
-		println!("Device: {}", self.adapter.get_info().name);
-		println!("Backend: {}", match self.adapter.get_info().backend{
-			wgpu::Backend::BrowserWebGpu => "Browser",
-			wgpu::Backend::Dx12 => "DX12",
-			wgpu::Backend::Vulkan => "Vulkan",
-			wgpu::Backend::Metal => "Metal",
-			wgpu::Backend::Dx11 => "DX11",
-			wgpu::Backend::Gl => "OpenGL",
-			wgpu::Backend::Empty => "None"
+		println!("Device: {}", self.agnostics.adapter.get_info().name);
+		println!("Backend: {}", match self.agnostics.adapter.get_info().backend{
+			Backend::BrowserWebGpu => "Browser",
+			Backend::Dx12 => "DX12",
+			Backend::Vulkan => "Vulkan",
+			Backend::Metal => "Metal",
+			Backend::Dx11 => "DX11",
+			Backend::Gl => "OpenGL",
+			Backend::Empty => "None"
 		});
 	}
+}
+
+impl RenderAgnostics {
+	pub fn new(window: &Window) -> Self {
+		let instance = Instance::new(InstanceDescriptor{
+			backends: Backends::DX12,
+			dx12_shader_compiler: Default::default(),	
+			//dx12_shader_compiler: wgpu::Dx12Compiler::Dxc { 
+			//	dxil_path: Some(PathBuf::from("dxil.dll")),
+			//	dxc_path: Some(PathBuf::from("dxcompiler.dll")) 
+			//}, 
+		});
+		let surface = unsafe{instance.create_surface(window.borrow_window())}.expect("failed to create surface");
+
+		let adapter = instance.request_adapter(&RequestAdapterOptions{
+			power_preference: PowerPreference::HighPerformance,
+			compatible_surface: Some(&surface),
+			force_fallback_adapter: false,
+		}).block_on().expect("Fail to find suitable adapter");
+		
+		let limits = adapter.limits();
+		let (device, queue) = adapter.request_device(&DeviceDescriptor{
+			features: Features::default(),
+			//limits: Limits{max_compute_workgroup_storage_size: 24000, ..Default::default()},
+			limits: Limits{..Default::default()},
+			label: Some("device"),
+		}, None).block_on().expect("failed to create device and queue");
+
+		println!("max workgroup storage: {}\ndefault limit: {}",
+			limits.max_compute_workgroup_storage_size,
+			Limits::default().max_compute_workgroup_storage_size);
+		
+		let surface_capabilities = surface.get_capabilities(&adapter);
+		let surface_format = surface_capabilities.formats.iter().copied()
+			.filter(|f| f.describe().srgb)
+			.next().unwrap_or(surface_capabilities.formats[0]);
+		let surface_config = SurfaceConfiguration {
+			usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST,
+			format: TextureFormat::Rgba8Unorm,//surface.get_preferred_format(&adapter).unwrap()
+			width: window.inner_width(), 
+			height: window.inner_height(), 
+			present_mode: PresentMode::Fifo,
+			alpha_mode: CompositeAlphaMode::Opaque,
+			view_formats: vec![],
+		};
+		surface.configure(&device, &surface_config);
+        
+		Self {
+			surface: surface,
+			adapter: adapter,
+			device: device,
+			queue: queue,
+			surface_config: surface_config,
+		}
+	} 
 }
 
 //TODO: make pre compiler

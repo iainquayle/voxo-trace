@@ -214,8 +214,7 @@ impl OctDag {
 		print!("index: {}, octants: (", index);
 		for i in 0..OCTANT_COUNT {
 			print!("[index: {}, colour: {:#08x}, normal: {:#08x}]", self.nodes[index].octants[i].index, self.nodes[index].octants[i].colour, self.nodes[index].octants[i].normal)
-		}
-		print!(") \n");
+		} print!(") \n");
 		for i in 0..OCTANT_COUNT {
 			if self.nodes[index].octants[i].index != NULL_INDEX {
 				self.print_structure(self.nodes[index].octants[i].index as usize);

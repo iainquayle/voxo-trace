@@ -48,6 +48,7 @@ const POSITIVE_X: u32 = 1u;
 const POSITIVE_Y: u32 = 2u;
 const POSITIVE_Z: u32 = 4u;
 const NEGATIVE_OCTANT: u32 = 0u;
+const POSITIVE_MASKS: vec3<u32> = vec3<u32>(POSITIVE_X, POSITIVE_Y, POSITIVE_Z);
 
 @group(0) @binding(0) var<storage, read> dag: NodeBuffer;
 @group(0) @binding(100) var<uniform> camera: ViewInput;
@@ -60,11 +61,9 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	var lod_factor: f32 = sin(FOV / dims.x);
 
 	var level_size: f32 = MAX_SIZE;
-	var stack: array<StackEntry, MAX_DEPTH>;
 	var depth: i32 = 0;
-	//also regarding the stack it should be positionsible to make it such that the centers arent stored, so long as the octant was kept
-	//if this is done, in combination with the current center, the previous center can be calculated
-	//if space is a problem this may help, should also cut down on memory bandwidth issues which may provide more stable performance on lesser hardware
+	//if switch is made to 64bit positioning and indexing, keeping octant number only can be done to calculate the centers
+	var stack: array<StackEntry, MAX_DEPTH>;
 	stack[depth] = StackEntry(0u, vec3<f32>(0.0));
 	var octant_index: u32 = 0u;
 	var moving_up: bool = false;
@@ -85,10 +84,8 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	var length: f32 = 0.0;
 	
 	loop { if(depth < 0 || transmittance.w < MIN_TRANS || iters > MAX_ITERS) {break;}
-		octant_index = POSITIVE_X * u32(position.x > center.x || ((position.x == center.x) && direction_vec.x > 0.0)) +
-			POSITIVE_Y * u32(position.y > center.y || ((position.y == center.y) && direction_vec.y > 0.0)) +
-			POSITIVE_Z * u32(position.z > center.z || ((position.z == center.z) && direction_vec.z > 0.0));
-		
+		octant_index = dot(POSITIVE_MASKS,
+			vec3<u32>(position > center || ((position == center) && direction_vec > 0.0))); 	
 
 		let octant: Octant = dag.nodes[stack[depth].index].octants[octant_index];
 		//let lod_size: f32 = max(length * lod_factor, 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE);
@@ -102,14 +99,9 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			stack[depth + 1].index = octant.index;
 			level_size = level_size / 2.0;
 
-			//center.x = center.x + level_size * f32(1 | (i32((octant_index & POSITIVE_X) == POSITIVE_X) << 31));
-			//center.y = center.y + level_size * f32(1 | (i32((octant_index & POSITIVE_Y) == POSITIVE_Y) << 31));
-			//center.z = center.z + level_size * f32(1 | (i32((octant_index & POSITIVE_Z) == POSITIVE_Z) << 31));
+			//center = center + level_size * vec3<f32>(1 | (vec3<i32>(!((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)) << 31u));
 
-			center = center + level_size * (vec3<f32>(-1.0) + (vec3<f32>(2.0) * 
-				vec3<f32>(vec3<bool>((octant_index & POSITIVE_X) == POSITIVE_X, 
-				(octant_index & POSITIVE_Y) == POSITIVE_Y, 
-				(octant_index & POSITIVE_Z) == POSITIVE_Z)))); 
+			center = center + level_size * (-1.0 + 2.0 * vec3<f32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 
 			depth = depth + 1;
 			stack[depth].center = center;
@@ -126,19 +118,16 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			var next_position: vec3<f32> = vec3<f32>(MAX_SIZE * 2.0);
 			if ((to_zero.x > 0.0 && position.x != center.x) 
 				&& (to_zero.x < to_zero.y || to_zero.y <= 0.0) 
-				&& (to_zero.x < to_zero.z || to_zero.z <= 0.0)) {
-				next_position = vec3<f32>(center.x,
-					position.y + to_zero.x * direction_vec.y,
-					position.z + to_zero.x * direction_vec.z);
-			} else if((to_zero.y > 0.0 && position.y != center.y) 
-				&& (to_zero.y < to_zero.z || to_zero.z <= 0.0)) {
-				next_position = vec3<f32>(position.x + to_zero.y * direction_vec.x, 
-					center.y,
-					position.z + to_zero.y * direction_vec.z);
-			} else if((to_zero.z > 0.0 && position.z != center.z && direction_vec.z != 0.0)) {
-				next_position = vec3<f32>(position.x + to_zero.z * direction_vec.x,
-					position.y + to_zero.z * direction_vec.y,
-					center.z);
+				&& (to_zero.x < to_zero.z || to_zero.z <= 0.0)
+			) {
+				next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
+			} else if ((to_zero.y > 0.0 && position.y != center.y) 
+				&& (to_zero.y < to_zero.z || to_zero.z <= 0.0)
+			) {
+				next_position = position + to_zero.y * direction_vec;
+				next_position.y = center.y;
+			} else if ((to_zero.z > 0.0 && position.z != center.z && direction_vec.z != 0.0)) {
+				next_position = vec3<f32>(position.xy + to_zero.z * direction_vec.xy, center.z);
 			}
 
 			//slower???
@@ -152,29 +141,27 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			//	next_position = vec4<f32>(pos.x + to_zero.z * direction_vec.x, pos.y + to_zero.z * direction_vec.y, center.z, to_zero.z);
 			//}
 			
-			moving_up = !(abs(center.x - next_position.x) <= level_size 
-				&& abs(center.y - next_position.y) <= level_size 
-				&& abs(center.z - next_position.z) <= level_size);		
+			let no_more_planes = abs(center - next_position) <= level_size;
+			moving_up = !(no_more_planes.x && no_more_planes.y && no_more_planes.z);
+			//moving_up = !(abs(center.x - next_position.x) <= level_size 
+			//	&& abs(center.y - next_position.y) <= level_size 
+			//	&& abs(center.z - next_position.z) <= level_size);		
 	
 			//moving up
 			depth = depth - i32(moving_up); 
-			//center = center * vec3<f32>(f32(!moving_up)) + stack[depth].center * vec3<f32>(f32(moving_up));
 			level_size = level_size * f32(1u << u32(moving_up));
 
 			//not moving up
 			//black not coming entg from the dot
 			let len = dot(next_position - position, direction_vec);
 			length = length + (len * f32(!moving_up));
+
 			//if statment required so that NANs do not proliferate in position
-			//if(!moving_up) {
-			//	position = next_pos;
-			//}
 			if(moving_up) {
 				center = stack[depth].center;
 			} else {
 				position = next_position;
 			}
-
 
 			//the density should add colours, while the alpha should subtract(ie only let through its colour, that being said think of water and how it only refracts blue)
 			//suppositione there is a colour behind a coloured smoke, the colours should add but if behind glass, the glass wont allow the coluor through
