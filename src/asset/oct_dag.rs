@@ -19,6 +19,7 @@ const OCTANT_LIST: [IVec3; 8] =
 const MASK_8BIT: u32 = 0x000000FF;
 
 
+/*
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Hash)]
 struct NewNode {
@@ -37,11 +38,12 @@ struct Dag<T> {
 	pub nodes: Vec<NewNode>,
 	pub volumes: Vec<Volume<T>>,
 }
-
+*/
+type DagAddr = u32;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Octant {
-	pub index: u32, //index of the next node
+	pub index: DagAddr, //index of the next node
 	pub colour: u32, //rgba
 	pub normal: u32, //xyz desnity //change name to volume, or physical
 	pub extra: u32, // 8 shine, 8 radiance, 16 or 8 frames, 
@@ -55,24 +57,6 @@ pub struct OctDag {
 	pub nodes: Vec<Node>,
 }
 
-pub enum TestDagType {
-	Box,
-	Pillar,
-}
-
-#[derive(Clone, Copy)]
-pub enum VolumeType{
-	Perimiter,
-	Plane,
-	Pillar,
-}
-#[derive(Clone, Copy)]
-pub enum ColourType {
-	TiledSpectrum,
-	RedZGradient,
-	ClearBlue, 
-	ColouredWalls,
-}
 
 //TODO: consider making fn that creates u8 representation of data for render
 //TODO: consider making it possible to generate each virst octant in seperate threads
@@ -245,6 +229,23 @@ impl Octant {
 }
 
 
+pub enum TestDagType {
+	Box,
+	Pillar,
+}
+#[derive(Clone, Copy)]
+pub enum VolumeType{
+	Perimiter,
+	Plane,
+	Pillar,
+}
+#[derive(Clone, Copy)]
+pub enum ColourType {
+	TiledSpectrum,
+	RedZGradient,
+	ClearBlue, 
+	ColouredWalls,
+}
 
 impl TestDagType {
 	pub fn new(&self, depth: u32) -> &[(VolumeType, ColourType)] {

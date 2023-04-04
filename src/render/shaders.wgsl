@@ -1,3 +1,5 @@
+//alias DagAddress = u32; not yet supported by naga?
+
 struct Octant {
 	index: u32, //null is u32 max, 0xFFFFFFFF
 	colour: u32, //rgba
@@ -7,7 +9,7 @@ struct Octant {
 struct Node { //vec3 ints, x = index, y = colour, z = addition info
 	octants: array<Octant, 8>,
 }
-struct NodeBuffer {
+struct Dag {
 	nodes: array<Node>,
 }
 
@@ -50,7 +52,7 @@ const POSITIVE_Z: u32 = 4u;
 const NEGATIVE_OCTANT: u32 = 0u;
 const POSITIVE_MASKS: vec3<u32> = vec3<u32>(POSITIVE_X, POSITIVE_Y, POSITIVE_Z);
 
-@group(0) @binding(0) var<storage, read> dag: NodeBuffer;
+@group(0) @binding(0) var<storage, read> dag: Dag;
 @group(0) @binding(100) var<uniform> camera: ViewInput;
 @group(0) @binding(200) var<storage, write> view: ViewData;
 @group(0) @binding(300) var output: texture_storage_2d<rgba8unorm, write>;
@@ -98,72 +100,60 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 		if(!moving_up && !bottom) {
 			stack[depth + 1].index = octant.index;
-			level_size = level_size / 2.0;
+			level_size /= 2.0;
 
-			//center = center + level_size * vec3<f32>(1 | (vec3<i32>(!((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)) << 31u));
+			center += level_size * (-1.0 + 2.0 * vec3<f32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 
-			center = center + level_size * (-1.0 + 2.0 * vec3<f32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
-
-			depth = depth + 1;
+			depth += 1;
 			stack[depth].center = center;
 		} else {
 			if(bottom) {
 				last_octant = octant;
 			}
 
-			//may be some ways in which more performance could be gained by doing more with vector operations
-			//ie next position, abs around the plane checker
-
-			let to_zero: vec3<f32> = (center - position) * inverse_vec;
-			
 			var next_position: vec3<f32> = vec3<f32>(MAX_SIZE * 2.0);
-			if ((to_zero.x > 0.0 && position.x != center.x) 
-				&& (to_zero.x < to_zero.y || to_zero.y <= 0.0) 
-				&& (to_zero.x < to_zero.z || to_zero.z <= 0.0)
-			) {
-				next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
-			} else if ((to_zero.y > 0.0 && position.y != center.y) 
-				&& (to_zero.y < to_zero.z || to_zero.z <= 0.0)
-			) {
-				next_position = position + to_zero.y * direction_vec;
-				next_position.y = center.y;
-			} else if ((to_zero.z > 0.0 && position.z != center.z && direction_vec.z != 0.0)) {
-				next_position = vec3<f32>(position.xy + to_zero.z * direction_vec.xy, center.z);
-			}
+			{
+				let to_zero: vec3<f32> = (center - position) * inverse_vec;
+				var plane_is_ahead: vec3<bool> = to_zero > 0.0 && position != center;
+				if (plane_is_ahead.x && and_vec2_elements(to_zero.x < to_zero.yz || to_zero.yz <= 0.0)) {
+					next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
+				} else if (plane_is_ahead.y && (to_zero.y < to_zero.z || to_zero.z <= 0.0)) {
+					next_position = position + to_zero.y * direction_vec;
+					next_position.y = center.y;
+				} else if (plane_is_ahead.z && direction_vec.z != 0.0) {
+					next_position = vec3<f32>(position.xy + to_zero.z * direction_vec.xy, center.z);
+				}
 
-			//slower???
-			//may just be slower until more diverse and heavily branching dags are ran
-			//var next_position: vec4<f32> = vec4<f32>(MAX_SIZE * 2.0);
-			//if(to_zero.x > 0.0 && position.x != center.x) {
-			//	next_position = vec4<f32>(center.x, pos.y + to_zero.x * direction_vec.y, pos.z + to_zero.x * direction_vec.z, to_zero.x);
-			//} if(to_zero.y > 0.0 && to_zero.y < next_position.w && pos.y != center.y) {
-			//	next_position = vec4<f32>(pos.x + to_zero.y * direction_vec.x, center.y, pos.z + to_zero.y * direction_vec.z, to_zero.y); 
-			//} if(to_zero.z > 0.0 && to_zero.z < next_position.w && pos.z != center.z) {
-			//	next_position = vec4<f32>(pos.x + to_zero.z * direction_vec.x, pos.y + to_zero.z * direction_vec.y, center.z, to_zero.z);
-			//}
-			
-			let no_more_planes = abs(center - next_position) <= level_size;
-			moving_up = !(no_more_planes.x && no_more_planes.y && no_more_planes.z);
-			//moving_up = !(abs(center.x - next_position.x) <= level_size 
-			//	&& abs(center.y - next_position.y) <= level_size 
-			//	&& abs(center.z - next_position.z) <= level_size);		
+				//slower???
+				//may just be slower until more diverse and heavily branching dags are ran
+				/*
+				if (plane_is_ahead.x) {
+					next_position = vec4<f32>(center.x, position.yz + to_zero.x * direction_vec.yz, to_zero.x);
+				} if (plane_is_ahead.y && to_zero.y < next_position.w) {
+					next_position = vec4<f32>(position + to_zero.y * direction_vec, to_zero.y);
+					next_position.y = center.y;
+				} if (plane_is_ahead.z && to_zero.z < next_position.w)  {
+					next_position = vec4<f32>(position.xy + to_zero.z * direction_vec.xy, center.z, to_zero.z);
+				}
+				*/
+			}	
+
+			moving_up = !(and_vec3_elements(abs(center - next_position.xyz) <= level_size));
 	
 			//moving up
-			depth = depth - i32(moving_up); 
-			level_size = level_size * f32(1u << u32(moving_up));
+			//bench moving some of these back into if statement
+			depth -= i32(moving_up); 
+			level_size *= f32(1u << u32(moving_up));
 
-			//not moving up
-			//black not coming entg from the dot
-			let len = dot(next_position - position, direction_vec);
-			length = length + (len * f32(!moving_up));
+			//moving forward
+			let len = dot(next_position.xyz - position, direction_vec);
+			length += (len * f32(!moving_up));
 
 			//if statment required so that NANs do not proliferate in position
 			if(moving_up) {
 				center = stack[depth].center;
-				//can use if need to switch the stack entries
-				//center = center + level_size * (-1.0 + 2.0 * vec3<f32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 			} else {
-				position = next_position;
+				position = next_position.xyz;
 			}
 
 			//the density should add colours, while the alpha should subtract(ie only let through its colour, that being said think of water and how it only refracts blue)
@@ -208,13 +198,19 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 //	}
 
 	
-	rgb = rgb / vec3<f32>(255.0);	
+	rgb /= vec3<f32>(255.0);	
 	textureStore(output, vec2<i32>(global_id.xy), vec4<f32>(rgb, 1.0));
 }
 
 
 //TODO: generating a vector field texture, then just use that, that will require being put into the rust rather 
 //vectors generated stretch vertically but not horizontally? should check with square res
+fn and_vec2_elements(vec: vec2<bool>) -> bool {
+	return vec.x && vec.y; 
+}
+fn and_vec3_elements(vec: vec3<bool>) -> bool {
+	return vec.x && vec.y && vec.z;
+}
 fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
 	let thetas: vec2<f32> = vec2<f32>(-((coords.x - dims.x / 2.0) / dims.x * FOV * 2.0),
 		((coords.y - dims.y / 2.0) / dims.x * FOV * 2.0));
@@ -229,6 +225,7 @@ fn rotation(direction_vec: vec3<f32>, radians: vec3<f32>) -> vec3<f32> {
 		new_vec.y,
 		cos(radians.x) * new_vec.z + sin(radians.x) * new_vec.x);
 }
+//TODO: check if the u32 vec is even needed
 fn unpack4x8unorm_local(x: u32) -> vec4<f32> {
 	return vec4<f32>(vec4<u32>((x >> 24u) & MASK_8BIT,
 		(x >> 16u) & MASK_8BIT,
