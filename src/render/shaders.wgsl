@@ -114,13 +114,19 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			var next_position: vec3<f32> = vec3<f32>(MAX_SIZE * 2.0);
 			{
 				let to_zero: vec3<f32> = (center - position) * inverse_vec;
-				var plane_is_ahead: vec3<bool> = to_zero > 0.0 && position != center;
-				if (plane_is_ahead.x && and_vec2_elements(to_zero.x < to_zero.yz || to_zero.yz <= 0.0)) {
+				let to_zero_valid: vec3<bool> = to_zero > 0.0 && position != center;
+				/*
+				let temp = to_zero_valid && 
+					(to_zero < barrel_left_f(to_zero) || !barrel_left_b(to_zero_valid)) &&
+					(to_zero < barrel_right_f(to_zero) || !barrel_right_b(to_zero_valid));
+				next_position = select(position + direction_vec * dot(vec3<f32>(temp), to_zero), center, temp);
+				*/
+				if (to_zero_valid.x && all(to_zero.x < to_zero.yz || !to_zero_valid.yz)) {
 					next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
-				} else if (plane_is_ahead.y && (to_zero.y < to_zero.z || to_zero.z <= 0.0)) {
+				} else if (to_zero_valid.y && (to_zero.y < to_zero.z || !to_zero_valid.z)) {
 					next_position = position + to_zero.y * direction_vec;
 					next_position.y = center.y;
-				} else if (plane_is_ahead.z && direction_vec.z != 0.0) {
+				} else if (to_zero_valid.z && direction_vec.z != 0.0) {
 					next_position = vec3<f32>(position.xy + to_zero.z * direction_vec.xy, center.z);
 				}
 
@@ -138,7 +144,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 				*/
 			}	
 
-			moving_up = !(and_vec3_elements(abs(center - next_position.xyz) <= level_size));
+			moving_up = !(all(abs(center - next_position.xyz) <= level_size)) /*&& next_position != position*/;
 	
 			//moving up
 			//bench moving some of these back into if statement
@@ -182,7 +188,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 				rgb = rgb + octant_rgba.xyz * vec3<f32>(octant_norm.w);
 			}
 		}
-		iters = iters + 1u;
+		iters += 1u;
 	}
 
 	var octant_rgba = unpack4x8unorm_local(last_octant.colour); 
@@ -205,11 +211,17 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 //TODO: generating a vector field texture, then just use that, that will require being put into the rust rather 
 //vectors generated stretch vertically but not horizontally? should check with square res
-fn and_vec2_elements(vec: vec2<bool>) -> bool {
-	return vec.x && vec.y; 
+fn barrel_right_b(x: vec3<bool>) -> vec3<bool> {
+	return vec3<bool>(x.z, x.xy);
 }
-fn and_vec3_elements(vec: vec3<bool>) -> bool {
-	return vec.x && vec.y && vec.z;
+fn barrel_right_f(x: vec3<f32>) -> vec3<f32> {
+	return vec3<f32>(x.z, x.xy);
+}
+fn barrel_left_b(x: vec3<bool>) -> vec3<bool> {
+	return vec3<bool>(x.yz, x.x);
+}
+fn barrel_left_f(x: vec3<f32>) -> vec3<f32> {
+	return vec3<f32>(x.yz, x.x);
 }
 fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
 	let thetas: vec2<f32> = vec2<f32>(-((coords.x - dims.x / 2.0) / dims.x * FOV * 2.0),
