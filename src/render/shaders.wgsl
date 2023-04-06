@@ -129,25 +129,13 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 				} else if (to_zero_valid.z && direction_vec.z != 0.0) {
 					next_position = vec3<f32>(position.xy + to_zero.z * direction_vec.xy, center.z);
 				}
-
-				//slower???
-				//may just be slower until more diverse and heavily branching dags are ran
-				/*
-				if (plane_is_ahead.x) {
-					next_position = vec4<f32>(center.x, position.yz + to_zero.x * direction_vec.yz, to_zero.x);
-				} if (plane_is_ahead.y && to_zero.y < next_position.w) {
-					next_position = vec4<f32>(position + to_zero.y * direction_vec, to_zero.y);
-					next_position.y = center.y;
-				} if (plane_is_ahead.z && to_zero.z < next_position.w)  {
-					next_position = vec4<f32>(position.xy + to_zero.z * direction_vec.xy, center.z, to_zero.z);
-				}
-				*/
 			}	
 
-			moving_up = !(all(abs(center - next_position.xyz) <= level_size)) /*&& next_position != position*/;
+			moving_up = any(abs(center - next_position) > level_size /*|| temp*/);
 	
 			//moving up
 			//bench moving some of these back into if statement
+			//it does appear to be a little more stable not being in here
 			depth -= i32(moving_up); 
 			level_size *= f32(1u << u32(moving_up));
 
