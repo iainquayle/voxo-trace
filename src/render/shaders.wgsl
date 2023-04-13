@@ -1,9 +1,9 @@
-//alias DagAddress = u32; not yet supported by naga?
+type DagAddress = u32; 
 
 struct Octant {
-	index: u32, //null is u32 max, 0xFFFFFFFF
+	index: DagAddress, //null is u32 max, 0xFFFFFFFF
 	colour: u32, //rgba
-	normal: u32, //24 bits normal, 8 for density 
+	normal: u32, //24 bits normal, 8 for density //may want to change such that density is alpha, that more closely resmbles how the colours add
 	extra: u32, //, 8 for shine,  16 for frames // 8 would be for indexing in larger tree 
 }
 struct Node { //vec3 ints, x = index, y = colour, z = addition info
@@ -14,7 +14,7 @@ struct Dag {
 }
 
 struct StackEntry {
-	index: u32,
+	index: DagAddress,
 	center: vec3<f32>,
 }
 
@@ -39,7 +39,7 @@ struct LightData {
 }
 
 const MAX_DEPTH: i32 = 16;
-const NULL_INDEX: u32 = 0xFFFFFFFFu;
+const NULL_INDEX: DagAddress = 0xFFFFFFFFu;
 const MASK_8BIT: u32 = 0x000000FFu;
 const MAX_SIZE: f32 = 32768.0;
 const MAX_ITERS: u32 = 256u;
@@ -160,39 +160,23 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 				//ie if the transmittance is already at or under, or som function approximating the idea, the transmittance calculated with the alpha, then its effects are minimized 
 				//or the other option being that an alpha value is stored with the transmittance and that is used as the thershold?
 
-			var octant_rgba = unpack4x8unorm_local(last_octant.colour); 
-			var octant_norm = unpack4x8unorm_local(last_octant.normal);
-			octant_rgba.w = (octant_rgba.w / 255.0);
-			octant_norm.w = (octant_norm.w / 255.0);
+			var octant_rgba = unpack4x8unorm_local(last_octant.colour) / 255.0; 
+			var octant_norm = unpack4x8unorm_local(last_octant.normal) / 255.0;
 			if((octant_norm.w > 0.0 && octant_rgba.w > 0.0) && !moving_up) {
-				//changes the denisty to value dependant on distance covered and density
-				//octant_rgba.w = (len / (len + (3000.0 * (1.0 - octant_rgba.w)))) * (1.0 - rgba.w);
 				octant_norm.w = (len / (len + (3000.0 
 					* ((1.0 - octant_norm.w) + (1.0 - octant_rgba.w))))) 
 					* transmittance.w;
-				//octant_rgba.xyz = octant_rgba
 				transmittance.w = transmittance.w - octant_norm.w;
-				
 				rgb = rgb + octant_rgba.xyz * vec3<f32>(octant_norm.w);
 			}
 		}
 		iters += 1u;
 	}
 
-	var octant_rgba = unpack4x8unorm_local(last_octant.colour); 
-	octant_rgba.w = (octant_rgba.w / 255.0);
+	var octant_rgba = unpack4x8unorm_local(last_octant.colour) / 255.0; 
 	if( octant_rgba.w > 0.0) {
 		rgb = rgb + octant_rgba.xyz * vec3<f32>(transmittance.w);
 	}
-	//var octant_rgba = unpack4x8unorm_local(last_octant.colour);
-	//var octant_norm = unpack4x8unorm_local(last_octant.normal);
-	//octant_rgba.w = (1.0 - rgba.w);
-	//if(octant_rgba.w > 0.0) {
-//		rgba = rgba + vec4<f32>(octant_rgba.xyz * vec3<f32>(octant_rgba.w), octant_rgba.w);	
-//	}
-
-	
-	rgb /= vec3<f32>(255.0);	
 	textureStore(output, vec2<i32>(global_id.xy), vec4<f32>(rgb, 1.0));
 }
 
