@@ -1,8 +1,10 @@
-type DagAddress = u32; 
+type DagIndex = u32; 
 
-//while no readable, it may be useful to put everything in a vector, may speed up reads being able to read all at once
+//TODO: change to using a vec4, may need to define alignment, but would likely help alot with read speeds
+//perhaps create functions for grabbing info to help with readability
+//type Octant = vec4<u32>;
 struct Octant {
-	index: DagAddress, //null is u32 max, 0xFFFFFFFF
+	index: DagIndex, //null is u32 max, 0xFFFFFFFF
 	colour: u32, //rgba
 	normal: u32, //24 bits normal, 8 for density //may want to change such that density is alpha, that more closely resmbles how the colours add
 	extra: u32, //, 8 for shine,  16 for frames // 8 would be for indexing in larger tree 
@@ -27,7 +29,7 @@ struct ViewData {
 }
 
 const MAX_DEPTH: i32 = 16;
-const NULL_INDEX: DagAddress = 0xFFFFFFFFu;
+const NULL_INDEX: DagIndex = 0xFFFFFFFFu;
 const MASK_8BIT: u32 = 0x000000FFu;
 const MAX_SIZE: i32 = 0x008000; //can go up to 20 bits before excessive precission loss
 const MAX_ITERS: u32 = 256u;
@@ -52,7 +54,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 	var level_size: i32 = MAX_SIZE;
 	var depth: i32 = 0;
-	var stack: array<DagAddress, MAX_DEPTH>;
+	var stack: array<DagIndex, MAX_DEPTH>;
 	stack[depth] = 0u; 
 	var octant_index: u32 = 0u;
 	var moving_up: bool = false;
