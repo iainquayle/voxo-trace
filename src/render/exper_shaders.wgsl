@@ -95,8 +95,8 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 				let to_zero: vec3<f32> = (center - position) * inverse_vec;
 				let to_zero_valid: vec3<bool> = to_zero > 0.0 && position != center;
 				/* let temp = to_zero_valid && 
-					(to_zero <= barrel_left_f(to_zero) || !barrel_left_b(to_zero_valid)) &&
-					(to_zero < barrel_right_f(to_zero) || !barrel_right_b(to_zero_valid));
+					(to_zero <= to_zero.zxy || !to_zero_valid.zxy) &&
+					(to_zero < to_zero.yzx || !to_zero_valid.yzx);
 				next_position = select(position + direction_vec * dot(vec3<f32>(temp), to_zero), center, temp); */
 				if (to_zero_valid.x && all(to_zero.x < to_zero.yz || !to_zero_valid.yz)) {
 					next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
@@ -156,18 +156,6 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 //TODO: generating a vector field texture, then just use that, that will require being put into the rust rather 
 //vectors generated stretch vertically but not horizontally? should check with square res
-fn barrel_right_b(x: vec3<bool>) -> vec3<bool> {
-	return vec3<bool>(x.z, x.xy);
-}
-fn barrel_right_f(x: vec3<f32>) -> vec3<f32> {
-	return vec3<f32>(x.z, x.xy);
-}
-fn barrel_left_b(x: vec3<bool>) -> vec3<bool> {
-	return vec3<bool>(x.yz, x.x);
-}
-fn barrel_left_f(x: vec3<f32>) -> vec3<f32> {
-	return vec3<f32>(x.yz, x.x);
-}
 fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
 	let thetas: vec2<f32> = vec2<f32>(-((coords.x - dims.x / 2.0) / dims.x * FOV * 2.0),
 		((coords.y - dims.y / 2.0) / dims.x * FOV * 2.0));
