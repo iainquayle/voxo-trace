@@ -29,7 +29,7 @@ struct ViewData {
 const MAX_DEPTH: i32 = 16;
 const NULL_INDEX: DagAddress = 0xFFFFFFFFu;
 const MASK_8BIT: u32 = 0x000000FFu;
-const MAX_SIZE: i32 = 32768;
+const MAX_SIZE: i32 = 0x008000; //can go up to 20 bits before excessive precission loss
 const MAX_ITERS: u32 = 256u;
 const MIN_TRANS: f32 = 0.001;
 const FOV: f32 = 1.1;
@@ -79,15 +79,12 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			|| length * lod_factor > f32(level_size)
 			|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
 
-
 		if(!moving_up && !bottom) {
 			stack[depth + 1] = octant.index;
+			depth += 1;
 			level_size >>= 1u;
-
 			i_center += level_size * (-1 + 2 * vec3<i32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 			center = vec3<f32>(i_center - MAX_SIZE);
-
-			depth += 1;
 		} else {
 			if(bottom) {
 				previous_octant = octant;
@@ -97,12 +94,10 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			{
 				let to_zero: vec3<f32> = (center - position) * inverse_vec;
 				let to_zero_valid: vec3<bool> = to_zero > 0.0 && position != center;
-				/*
-				let temp = to_zero_valid && 
-					(to_zero < barrel_left_f(to_zero) || !barrel_left_b(to_zero_valid)) &&
+				/* let temp = to_zero_valid && 
+					(to_zero <= barrel_left_f(to_zero) || !barrel_left_b(to_zero_valid)) &&
 					(to_zero < barrel_right_f(to_zero) || !barrel_right_b(to_zero_valid));
-				next_position = select(position + direction_vec * dot(vec3<f32>(temp), to_zero), center, temp);
-				*/
+				next_position = select(position + direction_vec * dot(vec3<f32>(temp), to_zero), center, temp); */
 				if (to_zero_valid.x && all(to_zero.x < to_zero.yz || !to_zero_valid.yz)) {
 					next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
 				} else if (to_zero_valid.y && (to_zero.y < to_zero.z || !to_zero_valid.z)) {

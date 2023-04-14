@@ -1,3 +1,10 @@
+for light volumes, it could be a combination of on demand tracing and only using propogation 
+in order to get more fine detail shadows, trace a certain distance towards the light stepping up in the tree
+	if nothing is found take the light at its perscribe value, otherwise modify
+	however this keeps the distance required to be traced to minimum
+other option is follow the volumes all the way back to the source if possible
+
+
 possibilty: split the tree structure and the node data
 	this will massivley help reuse data nodes by allowing level agnostic nodes
 	ever tree node has a tree indexing array for sure
