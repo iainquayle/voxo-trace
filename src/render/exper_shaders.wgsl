@@ -90,25 +90,13 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 				previous_octant = octant;
 			}
 
-			var next_position: vec3<f32> = vec3<f32>(f32(MAX_SIZE) * 2.0);
-			{
-				let to_zero: vec3<f32> = (center - position) * inverse_vec;
-				let to_zero_valid: vec3<bool> = to_zero > 0.0 && position != center;
-				/* let temp = to_zero_valid && 
-					(to_zero <= to_zero.zxy || !to_zero_valid.zxy) &&
-					(to_zero < to_zero.yzx || !to_zero_valid.yzx);
-				next_position = select(position + direction_vec * dot(vec3<f32>(temp), to_zero), center, temp); */
-				if (to_zero_valid.x && all(to_zero.x < to_zero.yz || !to_zero_valid.yz)) {
-					next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
-				} else if (to_zero_valid.y && (to_zero.y < to_zero.z || !to_zero_valid.z)) {
-					next_position = position + to_zero.y * direction_vec;
-					next_position.y = center.y;
-				} else if (to_zero_valid.z && direction_vec.z != 0.0) {
-					next_position = vec3<f32>(position.xy + to_zero.z * direction_vec.xy, center.z);
-				}
-			}	
+			let to_zero: vec3<f32> = (center - position) * inverse_vec;
+			var valid: vec3<bool> = to_zero > 0.0 && position != center;
+			valid &= (to_zero <= to_zero.zxy || !valid.zxy) && (to_zero < to_zero.yzx || !valid.yzx);
+			let next_position = select(position + direction_vec * dot(vec3<f32>(valid), to_zero), center, valid); 
 
-			moving_up = any(abs(center - next_position) > f32(level_size) /*|| temp*/);
+			moving_up = any(abs(center - next_position) > f32(level_size)) || all(!valid);
+			//moving_up = all(vec3<bool>(~(vec3<u32>(abs(center - next_position) > f32(level_size)) ^ vec3<u32>(temp)) ^ vec3<u32>(temp)));
 	
 			//moving up
 			i_center += (level_size * (-1 + 2 * vec3<i32>((i_center - level_size) % (level_size * 4) == 0))) * i32(moving_up); 
@@ -153,6 +141,19 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	textureStore(output, vec2<i32>(global_id.xy), vec4<f32>(rgb, 1.0));
 }
 
+fn single_select(x: vec3<f32>, cond: vec3<bool>) -> f32 {
+	var ret = 0.0;
+	if (cond.x) {
+		ret = x.x;
+	}
+	if (cond.y) {
+		ret = x.y;
+	}
+	if (cond.z) {
+		ret = x.z;
+	}
+	return ret;
+}
 
 //TODO: generating a vector field texture, then just use that, that will require being put into the rust rather 
 //vectors generated stretch vertically but not horizontally? should check with square res
