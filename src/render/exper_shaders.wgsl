@@ -75,6 +75,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	var length: f32 = 0.0;
 	
 	loop { if(depth < 0 || transmittance.w < MIN_TRANS || iters > MAX_ITERS) {break;}
+		bottom |= pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
 		if (!moving_up && !bottom) {
 			stack[depth + 1] = octant.index;
 			depth += 1;
@@ -84,14 +85,15 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 			octant_index = calculate_octant(position, center, direction);
 			octant = fetch_octant(stack[depth], octant_index);
-			bottom = octant.index == NULL_INDEX 
-				|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
+			bottom = octant.index == NULL_INDEX;
+			//bottom = octant.index == NULL_INDEX 
+			//	|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
 		}  
 		
+		if(bottom) {
+			previous_octant = octant;
+		}
 		if (moving_up || bottom) {
-			if(bottom) {
-				previous_octant = octant;
-			}
 
 			let to_zero: vec3<f32> = (center - position) * inverse_vec;
 			var valid: vec3<bool> = to_zero > 0.0 && position != center;
@@ -117,8 +119,10 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			octant_index = calculate_octant(position, center, direction);
 			octant = fetch_octant(stack[depth], octant_index);
 			bottom = octant.index == NULL_INDEX 
-				|| length * lod_factor > f32(level_size)
-				|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
+				|| length * lod_factor > f32(level_size);
+			//bottom = octant.index == NULL_INDEX 
+			//	|| length * lod_factor > f32(level_size)
+			//	|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
 		
 			//the density should add colours, while the alpha should subtract(ie only let through its colour, that being said think of water and how it only refracts blue)
 			//suppositione there is a colour behind a coloured smoke, the colours should add but if behind glass, the glass wont allow the coluor through
