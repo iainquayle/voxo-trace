@@ -34,8 +34,8 @@ const WORK_GROUP_HEIGHT: u32 = 4;
 const LIGHT_TEXTURE_WIDTH: u32 = 1024;
 const LIGHT_TEXTURE_HEIGHT: u32 = 1024;
 
-//macro_rules! SHADERS_PATH {() => {"shaders.wgsl"};}
-macro_rules! SHADERS_PATH {() => {"exper_shaders.wgsl"};}
+macro_rules! SHADERS_PATH {() => {"shaders.wgsl"};}
+//macro_rules! SHADERS_PATH {() => {"exper_shaders.wgsl"};}
 macro_rules! VIEW_TRACE_ENTRY {() => {"view_trace"};}
 
 

@@ -52,42 +52,43 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
 	var lod_factor: f32 = sin(FOV / dims.x);
 
+	var direction: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.direction.xyz));
+	var inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction;
+	var i_center: vec3<i32> = vec3<i32>(MAX_SIZE);
+	var center: vec3<f32> = vec3<f32>(0.0);
+	var position: vec3<f32> = camera.position.xyz; 
+
 	var level_size: i32 = MAX_SIZE;
 	var depth: i32 = 0;
 	var stack: array<DagIndex, MAX_DEPTH>;
 	stack[depth] = 0u; 
-	var octant_index: u32 = 0u;
+	var octant_index: u32 = calculate_octant(position, center, direction);
 	var moving_up: bool = false;
-
-	var direction_vec: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.direction.xyz));
-	var inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction_vec;
-	var i_center: vec3<i32> = vec3<i32>(MAX_SIZE);
-	var center: vec3<f32> = vec3<f32>(0.0);
-	var position: vec3<f32> = camera.position.xyz; 
+	var bottom: bool = false;
 		
 	var transmittance: vec4<f32> = vec4<f32>(1.0);
 	var rgb: vec3<f32> = vec3<f32>(0.0);
+	var octant: Octant = fetch_octant(0u, octant_index);
 	var previous_octant: Octant;
 
 	var iters: u32 = 0u;
 	var length: f32 = 0.0;
 	
 	loop { if(depth < 0 || transmittance.w < MIN_TRANS || iters > MAX_ITERS) {break;}
-		octant_index = dot(POSITIVE_MASKS,
-			vec3<u32>(position > center || ((position == center) && direction_vec > 0.0))); 	
-
-		let octant: Octant = dag.nodes[stack[depth]].octants[octant_index];
-		let bottom: bool = octant.index == NULL_INDEX 
-			|| length * lod_factor > f32(level_size)
-			|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
-
-		if(!moving_up && !bottom) {
+		if (!moving_up && !bottom) {
 			stack[depth + 1] = octant.index;
 			depth += 1;
 			level_size >>= 1u;
 			i_center += level_size * (-1 + 2 * vec3<i32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 			center = vec3<f32>(i_center - MAX_SIZE);
-		} else {
+
+			octant_index = calculate_octant(position, center, direction);
+			octant = fetch_octant(stack[depth], octant_index);
+			bottom = octant.index == NULL_INDEX 
+				|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
+		}  
+		
+		if (moving_up || bottom) {
 			if(bottom) {
 				previous_octant = octant;
 			}
@@ -95,10 +96,10 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			let to_zero: vec3<f32> = (center - position) * inverse_vec;
 			var valid: vec3<bool> = to_zero > 0.0 && position != center;
 			valid &= (to_zero <= to_zero.zxy || !valid.zxy) && (to_zero < to_zero.yzx || !valid.yzx);
-			let next_position = select(position + direction_vec * dot(vec3<f32>(valid), to_zero), center, valid); 
+			let next_position = select(position + direction * dot(vec3<f32>(valid), to_zero), center, valid); 
 
+			//can also use position == next instead of valid
 			moving_up = any(abs(center - next_position) > f32(level_size)) || all(!valid);
-			//moving_up = all(vec3<bool>(~(vec3<u32>(abs(center - next_position) > f32(level_size)) ^ vec3<u32>(temp)) ^ vec3<u32>(temp)));
 	
 			//moving up
 			i_center += (level_size * (-1 + 2 * vec3<i32>((i_center - level_size) % (level_size * 4) == 0))) * i32(moving_up); 
@@ -107,12 +108,18 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			level_size <<= u32(moving_up);
 			
 			//moving forward
-			let len = dot(next_position.xyz - position, direction_vec);
+			let len = dot(next_position.xyz - position, direction);
 			length += (len * f32(!moving_up));
 			if(!moving_up) {
 				position = next_position.xyz;
 			}
 
+			octant_index = calculate_octant(position, center, direction);
+			octant = fetch_octant(stack[depth], octant_index);
+			bottom = octant.index == NULL_INDEX 
+				|| length * lod_factor > f32(level_size)
+				|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
+		
 			//the density should add colours, while the alpha should subtract(ie only let through its colour, that being said think of water and how it only refracts blue)
 			//suppositione there is a colour behind a coloured smoke, the colours should add but if behind glass, the glass wont allow the coluor through
 			//the alpha is still kept with the rgba vec so that may create an option
@@ -143,21 +150,13 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	textureStore(output, vec2<i32>(global_id.xy), vec4<f32>(rgb, 1.0));
 }
 
-fn single_select(x: vec3<f32>, cond: vec3<bool>) -> f32 {
-	var ret = 0.0;
-	if (cond.x) {
-		ret = x.x;
-	}
-	if (cond.y) {
-		ret = x.y;
-	}
-	if (cond.z) {
-		ret = x.z;
-	}
-	return ret;
+fn fetch_octant(node_index: u32, octant_index: u32) -> Octant {
+	return dag.nodes[node_index].octants[octant_index];
+}
+fn calculate_octant(position: vec3<f32>, center: vec3<f32>, direction: vec3<f32>) -> u32 {
+	return dot(POSITIVE_MASKS, vec3<u32>(position > center || ((position == center) && direction > 0.0))); 	
 }
 
-//TODO: generating a vector field texture, then just use that, that will require being put into the rust rather 
 //vectors generated stretch vertically but not horizontally? should check with square res
 fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
 	let thetas: vec2<f32> = vec2<f32>(-((coords.x - dims.x / 2.0) / dims.x * FOV * 2.0),
@@ -165,10 +164,10 @@ fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
 	return cross(vec3<f32>(cos(thetas.x), 0.0, sin(thetas.x)),
 		vec3<f32>(0.0, cos(thetas.y), sin(thetas.y)));
 }
-fn rotation(direction_vec: vec3<f32>, radians: vec3<f32>) -> vec3<f32> {
-	var new_vec = vec3<f32>(direction_vec.x,
-		cos(radians.y) * direction_vec.y + sin(radians.y) * direction_vec.z,
-		cos(radians.y) * direction_vec.z - sin(radians.y) * direction_vec.y);
+fn rotation(direction: vec3<f32>, radians: vec3<f32>) -> vec3<f32> {
+	var new_vec = vec3<f32>(direction.x,
+		cos(radians.y) * direction.y + sin(radians.y) * direction.z,
+		cos(radians.y) * direction.z - sin(radians.y) * direction.y);
 	return vec3<f32>(cos(radians.x) * new_vec.x - sin(radians.x) * new_vec.z,
 		new_vec.y,
 		cos(radians.x) * new_vec.z + sin(radians.x) * new_vec.x);

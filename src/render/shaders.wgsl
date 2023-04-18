@@ -1,8 +1,10 @@
-type DagAddress = u32; 
+type DagIndex = u32; 
 
-//while no readable, it may be useful to put everything in a vector, may speed up reads being able to read all at once
+//TODO: change to using a vec4, may need to define alignment, but would likely help alot with read speeds
+//perhaps create functions for grabbing info to help with readability
+//type Octant = vec4<u32>;
 struct Octant {
-	index: DagAddress, //null is u32 max, 0xFFFFFFFF
+	index: DagIndex, //null is u32 max, 0xFFFFFFFF
 	colour: u32, //rgba
 	normal: u32, //24 bits normal, 8 for density //may want to change such that density is alpha, that more closely resmbles how the colours add
 	extra: u32, //, 8 for shine,  16 for frames // 8 would be for indexing in larger tree 
@@ -14,14 +16,9 @@ struct Dag {
 	nodes: array<Node>,
 }
 
-struct StackEntry {
-	index: DagAddress,
-	center: vec3<f32>,
-}
-
 struct ViewInput {
 	position: vec4<f32>, //x y z pad
-	radians: vec4<f32>, //yaw, pitch, roll, fov 
+	direction: vec4<f32>, //yaw, pitch, roll, fov 
 }
 
 struct ViewData {
@@ -32,9 +29,9 @@ struct ViewData {
 }
 
 const MAX_DEPTH: i32 = 16;
-const NULL_INDEX: DagAddress = 0xFFFFFFFFu;
+const NULL_INDEX: DagIndex = 0xFFFFFFFFu;
 const MASK_8BIT: u32 = 0x000000FFu;
-const MAX_SIZE: f32 = 32768.0;
+const MAX_SIZE: i32 = 0x008000; //can go up to 20 bits before excessive precission loss
 const MAX_ITERS: u32 = 256u;
 const MIN_TRANS: f32 = 0.001;
 const FOV: f32 = 1.1;
@@ -55,20 +52,19 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
 	var lod_factor: f32 = sin(FOV / dims.x);
 
-	var level_size: f32 = MAX_SIZE;
+	var level_size: i32 = MAX_SIZE;
 	var depth: i32 = 0;
-	//if switch is made to 64bit positioning and indexing, keeping octant number only can be done to calculate the centers
-	var stack: array<StackEntry, MAX_DEPTH>;
-	stack[depth] = StackEntry(0u, vec3<f32>(0.0));
+	var stack: array<DagIndex, MAX_DEPTH>;
+	stack[depth] = 0u; 
 	var octant_index: u32 = 0u;
 	var moving_up: bool = false;
 
-	let direction_vec: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.radians.xyz));
-	let inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction_vec;
-	//can make center an integer if need be if stack entries become index type
+	var direction_vec: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.direction.xyz));
+	var inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction_vec;
+	var i_center: vec3<i32> = vec3<i32>(MAX_SIZE);
 	var center: vec3<f32> = vec3<f32>(0.0);
 	var position: vec3<f32> = camera.position.xyz; 
-
+		
 	var transmittance: vec4<f32> = vec4<f32>(1.0);
 	var rgb: vec3<f32> = vec3<f32>(0.0);
 	var previous_octant: Octant;
@@ -80,63 +76,40 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		octant_index = dot(POSITIVE_MASKS,
 			vec3<u32>(position > center || ((position == center) && direction_vec > 0.0))); 	
 
-		let octant: Octant = dag.nodes[stack[depth].index].octants[octant_index];
-		//let lod_size: f32 = max(length * lod_factor, 1.0 / f32(MAX_ITERS - iters) * MAX_SIZE);
-		//let bottom: bool = octant.index == NULL_INDEX || length * lod_factor > level_size || 8.0 / f32(MAX_ITERS + 8u - iters) * MAX_SIZE > level_size;
+		let octant: Octant = dag.nodes[stack[depth]].octants[octant_index];
 		let bottom: bool = octant.index == NULL_INDEX 
-			|| length * lod_factor > level_size 
-			|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * MAX_SIZE > level_size;
-
+			|| length * lod_factor > f32(level_size)
+			|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
 
 		if(!moving_up && !bottom) {
-			stack[depth + 1].index = octant.index;
-			level_size /= 2.0;
-
-			center += level_size * (-1.0 + 2.0 * vec3<f32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
-
+			stack[depth + 1] = octant.index;
 			depth += 1;
-			stack[depth].center = center;
+			level_size >>= 1u;
+			i_center += level_size * (-1 + 2 * vec3<i32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
+			center = vec3<f32>(i_center - MAX_SIZE);
 		} else {
 			if(bottom) {
 				previous_octant = octant;
 			}
 
-			var next_position: vec3<f32> = vec3<f32>(MAX_SIZE * 2.0);
-			{
-				let to_zero: vec3<f32> = (center - position) * inverse_vec;
-				let to_zero_valid: vec3<bool> = to_zero > 0.0 && position != center;
-				/*
-				let temp = to_zero_valid && 
-					(to_zero < barrel_left_f(to_zero) || !barrel_left_b(to_zero_valid)) &&
-					(to_zero < barrel_right_f(to_zero) || !barrel_right_b(to_zero_valid));
-				next_position = select(position + direction_vec * dot(vec3<f32>(temp), to_zero), center, temp);
-				*/
-				if (to_zero_valid.x && all(to_zero.x < to_zero.yz || !to_zero_valid.yz)) {
-					next_position = vec3<f32>(center.x, position.yz + to_zero.x * direction_vec.yz);
-				} else if (to_zero_valid.y && (to_zero.y < to_zero.z || !to_zero_valid.z)) {
-					next_position = position + to_zero.y * direction_vec;
-					next_position.y = center.y;
-				} else if (to_zero_valid.z && direction_vec.z != 0.0) {
-					next_position = vec3<f32>(position.xy + to_zero.z * direction_vec.xy, center.z);
-				}
-			}	
+			let to_zero: vec3<f32> = (center - position) * inverse_vec;
+			var valid: vec3<bool> = to_zero > 0.0 && position != center;
+			valid &= (to_zero <= to_zero.zxy || !valid.zxy) && (to_zero < to_zero.yzx || !valid.yzx);
+			let next_position = select(position + direction_vec * dot(vec3<f32>(valid), to_zero), center, valid); 
 
-			moving_up = any(abs(center - next_position) > level_size /*|| temp*/);
+			//can also use position == next instead of valid
+			moving_up = any(abs(center - next_position) > f32(level_size)) || all(!valid);
 	
 			//moving up
-			//bench moving some of these back into if statement
-			//it does appear to be a little more stable not being in here
+			i_center += (level_size * (-1 + 2 * vec3<i32>((i_center - level_size) % (level_size * 4) == 0))) * i32(moving_up); 
+			center = vec3<f32>(i_center - MAX_SIZE);
 			depth -= i32(moving_up); 
-			level_size *= f32(1u << u32(moving_up));
-
+			level_size <<= u32(moving_up);
+			
 			//moving forward
 			let len = dot(next_position.xyz - position, direction_vec);
 			length += (len * f32(!moving_up));
-
-			//if statment required so that NANs do not proliferate in position
-			if(moving_up) {
-				center = stack[depth].center;
-			} else {
+			if(!moving_up) {
 				position = next_position.xyz;
 			}
 
@@ -170,21 +143,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	textureStore(output, vec2<i32>(global_id.xy), vec4<f32>(rgb, 1.0));
 }
 
-
-//TODO: generating a vector field texture, then just use that, that will require being put into the rust rather 
 //vectors generated stretch vertically but not horizontally? should check with square res
-fn barrel_right_b(x: vec3<bool>) -> vec3<bool> {
-	return vec3<bool>(x.z, x.xy);
-}
-fn barrel_right_f(x: vec3<f32>) -> vec3<f32> {
-	return vec3<f32>(x.z, x.xy);
-}
-fn barrel_left_b(x: vec3<bool>) -> vec3<bool> {
-	return vec3<bool>(x.yz, x.x);
-}
-fn barrel_left_f(x: vec3<f32>) -> vec3<f32> {
-	return vec3<f32>(x.yz, x.x);
-}
 fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
 	let thetas: vec2<f32> = vec2<f32>(-((coords.x - dims.x / 2.0) / dims.x * FOV * 2.0),
 		((coords.y - dims.y / 2.0) / dims.x * FOV * 2.0));
@@ -199,7 +158,6 @@ fn rotation(direction_vec: vec3<f32>, radians: vec3<f32>) -> vec3<f32> {
 		new_vec.y,
 		cos(radians.x) * new_vec.z + sin(radians.x) * new_vec.x);
 }
-//TODO: check if the u32 vec is even needed
 fn unpack4x8unorm_local(x: u32) -> vec4<f32> {
 	return vec4<f32>(vec4<u32>((x >> 24u) & MASK_8BIT,
 		(x >> 16u) & MASK_8BIT,
