@@ -1,13 +1,6 @@
 use std::{fs::File, io::Write};
 use pollster::FutureExt;
-use wgpu::{include_wgsl, util::{DeviceExt, BufferInitDescriptor}, Surface, Adapter, Device, Queue, 
-	SurfaceConfiguration, BufferDescriptor, BufferUsages, Instance, Backends, PowerPreference, Features, Limits,
-	TextureUsages, TextureFormat, PresentMode, CompositeAlphaMode, DeviceDescriptor, RequestAdapterOptions,
-	InstanceDescriptor, ComputePipeline, BindGroup, Texture, Buffer, TextureDescriptor, Extent3d, 
-	TextureDimension, PipelineLayoutDescriptor, BindGroupLayoutDescriptor, BindGroupLayoutEntry, 
-	ShaderStages, BindingType, BufferBindingType, Backend, StorageTextureAccess, TextureViewDimension, 
-	ComputePipelineDescriptor, BindGroupDescriptor, BindGroupEntry, BindingResource, SurfaceError, 
-	CommandEncoderDescriptor, ComputePassDescriptor, ImageCopyTexture, TextureAspect, Origin3d};
+use wgpu::{*, util::{*}};
 use glam::{Vec3, Vec4, UVec4};
 use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window};
 
@@ -21,6 +14,7 @@ inputs: 100-199
 intermediates: 200-299
 output: 300
  */
+//TODO: change these to enums? when the preprocessor is created
 const GROUP_INDEX: u32 = 0;
 const DAG_INDEX: u32 = 0;
 const VIEW_TRACE_INPUT_INDEX: u32 = 100;
@@ -31,59 +25,14 @@ const OUTPUT_TEXTURE_INDEX: u32 = 300;
 const WORK_GROUP_WIDTH: u32 = 8;
 const WORK_GROUP_HEIGHT: u32 = 4;
 
-const LIGHT_TEXTURE_WIDTH: u32 = 1024;
-const LIGHT_TEXTURE_HEIGHT: u32 = 1024;
+const LIGHT_GRID_DIMENSION: usize = 128;
 
-macro_rules! SHADERS_PATH {() => {"shaders.wgsl"};}
-//macro_rules! SHADERS_PATH {() => {"exper_shaders.wgsl"};}
+//macro_rules! SHADERS_PATH {() => {"shaders.wgsl"};}
+macro_rules! SHADERS_PATH {() => {"exper_shaders.wgsl"};}
 macro_rules! VIEW_TRACE_ENTRY {() => {"view_trace"};}
 
-
-
-#[repr(C)]
-pub struct _TemporalInputData {
-	pub temporals: UVec4, //time, frame, time delta, frame delta
-}
-//#[repr(C, align(8))]
-#[repr(C)]
-pub struct ViewInputData {
-	pub pos: Vec4, //x, y, z, pad
-	pub rads: Vec4, //yaw, pitch, roll, pad(change to fov)
-}
-#[repr(C)]
-pub struct _LightInputData {
-	pub pos: Vec4,//x y z pad
-	pub dir: Vec4,//x, y, z, fov 
-	pub rgb: Vec4,//r g b pad //a could be used to increase itensity?
-}
-
-/*
- there structs are required, 
- used to size allocation of data in the device
- */
-#[repr(C)]
-struct ViewData {
-	pub _pos: Vec3,
-	pub _len: f32,
-	pub _rgba: u32, 		
-	pub _normal: u32, 
-}
-#[repr(C)]
-struct LightData {
-	pub _rgb_len: Vec3,
-	pub _rgb: Vec3,
-}
-
-
-struct RenderAgnostics {
-	pub surface: Surface,
-	pub adapter: Adapter,
-	pub device: Device,
-	pub queue: Queue,
-	pub surface_config: SurfaceConfiguration,
-} 
 pub struct Render {
-	agnostics: RenderAgnostics,
+	integrals: RenderIntegrals,
 
 	//compute_shader:
 	//view_trace_layout: PipelineLayout,
@@ -108,24 +57,24 @@ pub struct Render {
 
 impl Render {
 	pub fn new(window: &Window, state: &Logic) -> Self {
-		let agnostics = RenderAgnostics::new(window);
+		let integrals = RenderIntegrals::new(window);
 
-		let byte_dag_array = unsafe{std::slice::from_raw_parts(state.dag.nodes[..].as_ptr() as *const u8,
+		let dag_byte_array = unsafe{std::slice::from_raw_parts(state.dag.nodes[..].as_ptr() as *const u8,
 			std::mem::size_of::<Node>() * state.dag.nodes.len())};
 		//must have trait POD on it, however that allows for things like bit fiddling
 		//let byte_dag_arr = bytemuck::bytes_of(&state.dag.nodes);
-		let dag_buffer = agnostics.device.create_buffer_init(&BufferInitDescriptor{
+		let dag_buffer = integrals.device.create_buffer_init(&BufferInitDescriptor{
 			label: Some("dag buffer"),
 			usage: BufferUsages::COPY_DST | BufferUsages::STORAGE,
-			contents: byte_dag_array,
+			contents: dag_byte_array,
 		});
-		let view_input_uniform = agnostics.device.create_buffer( &BufferDescriptor {
+		let view_input_uniform = integrals.device.create_buffer( &BufferDescriptor {
 			label: Some(" buffer"),
 			mapped_at_creation: false,
 			usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
 			size: std::mem::size_of::<ViewInputData>() as u64,
 		});
-		let output_texture = agnostics.device.create_texture(&TextureDescriptor {
+		let output_texture = integrals.device.create_texture(&TextureDescriptor {
 			label: Some("output texture"),
 			size: Extent3d {
 				width: window.inner_width(),
@@ -139,42 +88,31 @@ impl Render {
 			usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
 			view_formats: &[],
 		});
-		//returns buffers required to make one lane in double buffered pipline
-		//does not need to create the input uniform or buffers or the output texture
-		let (view_buffers, _light_buffers)  = { 
-			let create_buffer = |size: usize| {
-				agnostics.device.create_buffer( &BufferDescriptor {
-					label: Some("view data buffer"),
-					mapped_at_creation: false,
-					usage: BufferUsages::STORAGE,
-					size: size as u64,
-				})
-			};
-			/*
-			light buffer when creating multiples will either need to be made as multiple buffers, or one large buffer
-			should be ok since the buffer can be treated as a muti dimensionsonal array once it is in the shader
-			 */
 
-			([create_buffer((agnostics.surface_config.height 
-					* agnostics.surface_config.width 
-					* std::mem::size_of::<ViewData>() as u32) as usize),
-			create_buffer((agnostics.surface_config.height 
-					* agnostics.surface_config.width 
-					* std::mem::size_of::<ViewData>() as u32) as usize)], 
-			[create_buffer((LIGHT_TEXTURE_WIDTH 
-					* LIGHT_TEXTURE_HEIGHT 
-					* std::mem::size_of::<LightData>() as u32) as usize),
-			create_buffer((LIGHT_TEXTURE_WIDTH 
-					* LIGHT_TEXTURE_HEIGHT 
-					* std::mem::size_of::<LightData>() as u32) as usize)])
+		let create_buffer = |size: usize, label: &str| {
+			integrals.device.create_buffer( &BufferDescriptor {
+				label: Some(label),
+				mapped_at_creation: false,
+				usage: BufferUsages::STORAGE,
+				size: size as u64,
+			})
 		};
+
+		let light_grid_buffers =  
+			[create_buffer(LIGHT_GRID_DIMENSION.pow(3) * std::mem::size_of::<LightVolume>(), "light grid buffer"),
+			create_buffer(LIGHT_GRID_DIMENSION.pow(3) * std::mem::size_of::<LightVolume>(), "light grid buffer"),];
+		let view_buffers  =  
+			[create_buffer((integrals.surface_config.height 
+					* integrals.surface_config.width) as usize 
+					* std::mem::size_of::<ViewData>(), 
+					"view buffer"),
+			create_buffer((integrals.surface_config.height 
+					* integrals.surface_config.width) as usize 
+					* std::mem::size_of::<ViewData>(),
+					"view buffer")];
 		
-		/*
-		create view trace pipeline
-		TODO: this should be able to be turned into just a singular pipline layout, not differentiated as view trace
-		 */
-		let view_trace_shader = agnostics.device.create_shader_module(include_wgsl!(SHADERS_PATH!()));
-		let view_trace_layout = {
+		let shader_module = integrals.device.create_shader_module(include_wgsl!(SHADERS_PATH!()));
+		let pipeline_layout = {
 			let buffer_entry = |binding_index: u32, buffer_type: BufferBindingType| {
 				BindGroupLayoutEntry {
 					binding: binding_index,
@@ -186,11 +124,11 @@ impl Render {
 					},
 					count: None,
 			}};
-			agnostics.device.create_pipeline_layout(&PipelineLayoutDescriptor {
+			integrals.device.create_pipeline_layout(&PipelineLayoutDescriptor {
 			label: Some("view trace pipline layout"),
 			push_constant_ranges: &[],
 			bind_group_layouts: &[
-				&agnostics.device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+				&integrals.device.create_bind_group_layout(&BindGroupLayoutDescriptor {
 					label: Some("view trace bind group layout"),
 					entries: &[
 						buffer_entry(DAG_INDEX, BufferBindingType::Storage { read_only: true }),
@@ -210,10 +148,10 @@ impl Render {
 				}),
 			],
 		})};
-		let view_trace_pipeline = agnostics.device.create_compute_pipeline(&ComputePipelineDescriptor {
+		let view_trace_pipeline = integrals.device.create_compute_pipeline(&ComputePipelineDescriptor {
 			label: Some("view trace pipeline"),
-			layout: Some(&view_trace_layout),
-			module: &view_trace_shader,
+			layout: Some(&pipeline_layout),
+			module: &shader_module,
 			entry_point: VIEW_TRACE_ENTRY!(), 
 		});	
 
@@ -221,32 +159,33 @@ impl Render {
 
 		/*
 		 */
-		let create_view_trace_bindgroup = |view: &Buffer| {
-			agnostics.device.create_bind_group(&BindGroupDescriptor {
-				label: Some("view trace bindgroup"),
-				layout: &view_trace_pipeline.get_bind_group_layout(GROUP_INDEX),
-				entries: &[
-					BindGroupEntry {
-						binding: DAG_INDEX,
-						resource: dag_buffer.as_entire_binding(),
-					},
-					BindGroupEntry {
-						binding: VIEW_TRACE_INPUT_INDEX,
-						resource: view_input_uniform.as_entire_binding(),
-					},
-					BindGroupEntry {
-						binding: VIEW_DATA_INDEX,
-						resource: view.as_entire_binding(),
-					},
-					BindGroupEntry {
-						binding: OUTPUT_TEXTURE_INDEX,
-						resource: BindingResource::TextureView(&output_texture.create_view(&wgpu::TextureViewDescriptor::default())),
-					},
-				],
-			})
+		let view_trace_bindgroups = {
+			let create_view_trace_bindgroup = |view: &Buffer| {
+				integrals.device.create_bind_group(&BindGroupDescriptor {
+					label: Some("view trace bindgroup"),
+					layout: &view_trace_pipeline.get_bind_group_layout(GROUP_INDEX),
+					entries: &[
+						BindGroupEntry {
+							binding: DAG_INDEX,
+							resource: dag_buffer.as_entire_binding(),
+						},
+						BindGroupEntry {
+							binding: VIEW_TRACE_INPUT_INDEX,
+							resource: view_input_uniform.as_entire_binding(),
+						},
+						BindGroupEntry {
+							binding: VIEW_DATA_INDEX,
+							resource: view.as_entire_binding(),
+						},
+						BindGroupEntry {
+							binding: OUTPUT_TEXTURE_INDEX,
+							resource: BindingResource::TextureView(&output_texture.create_view(&wgpu::TextureViewDescriptor::default())),
+						},
+					],
+				})
+			};
+			[create_view_trace_bindgroup(&view_buffers[0]), create_view_trace_bindgroup(&view_buffers[1])]
 		};
-		let view_trace_bindgroups = [create_view_trace_bindgroup(&view_buffers[0]), create_view_trace_bindgroup(&view_buffers[1])];
-
 
 		/*
 		let create_final_bindgroup = || {
@@ -256,7 +195,7 @@ impl Render {
 
 
 		return Self {
-         agnostics: agnostics,
+         integrals: integrals,
 
 			view_trace_pipeline: view_trace_pipeline,
 			view_trace_bindgroups: view_trace_bindgroups,
@@ -293,17 +232,17 @@ impl Render {
 					rads: Into::<Vec4>::into((state.camera_orientaion_vec3(), 0.0)),
 			});
 
-		let mut encoder = self.agnostics.device.create_command_encoder(&CommandEncoderDescriptor{label: Some("view trace render pass encoder")});
+		let mut encoder = self.integrals.device.create_command_encoder(&CommandEncoderDescriptor{label: Some("view trace render pass encoder")});
 		
 		let mut view_trace_pass = encoder.begin_compute_pass(&ComputePassDescriptor { label: Some("view trace pass")});
 		view_trace_pass.set_pipeline(&self.view_trace_pipeline);
 		view_trace_pass.set_bind_group(GROUP_INDEX, &self.view_trace_bindgroups[(self.frame_counter % 2) as usize], &[]);
-		view_trace_pass.dispatch_workgroups(self.agnostics.surface_config.width / WORK_GROUP_WIDTH, self.agnostics.surface_config.height / WORK_GROUP_HEIGHT, 1);
+		view_trace_pass.dispatch_workgroups(self.integrals.surface_config.width / WORK_GROUP_WIDTH, self.integrals.surface_config.height / WORK_GROUP_HEIGHT, 1);
 
 		drop(view_trace_pass);
 
 
-		let surface_texture = self.agnostics.surface.get_current_texture()?;
+		let surface_texture = self.integrals.surface.get_current_texture()?;
 		encoder.copy_texture_to_texture(
 			ImageCopyTexture {
 				aspect: TextureAspect::All,
@@ -318,8 +257,8 @@ impl Render {
 				origin: Origin3d::ZERO,
 			},
 			Extent3d {
-				width: self.agnostics.surface_config.width,
-				height: self.agnostics.surface_config.height,
+				width: self.integrals.surface_config.width,
+				height: self.integrals.surface_config.height,
 				depth_or_array_layers: 1,
 			},
 		);
@@ -333,7 +272,7 @@ impl Render {
 		//if wnating to make a multi stage rendering process, create second encoder, and submitt both at once
 		//the second will need to operate on data given by the previous iteration rather than the same
 		self.previous_frame_time = state.start_time.elapsed().as_micros();
-		self.agnostics.queue.submit(std::iter::once(encoder.finish()));
+		self.integrals.queue.submit(std::iter::once(encoder.finish()));
 		surface_texture.present();
 		let frame_time = state.start_time.elapsed().as_micros() - self.previous_frame_time;
 		
@@ -369,13 +308,13 @@ impl Render {
 	pub fn update_dag(&mut self) {}
 
 	pub fn update_camera(&mut self, pos: ViewInputData) {
-		self.agnostics.queue.write_buffer(&self.view_input_uniform, 0, unsafe{ std::slice::from_raw_parts((&pos as *const ViewInputData) as *const u8, std::mem::size_of::<ViewInputData>()) });
+		self.integrals.queue.write_buffer(&self.view_input_uniform, 0, unsafe{ std::slice::from_raw_parts((&pos as *const ViewInputData) as *const u8, std::mem::size_of::<ViewInputData>()) });
 	}
 
 
 	pub fn print_state(&self) {
-		println!("Device: {}", self.agnostics.adapter.get_info().name);
-		println!("Backend: {}", match self.agnostics.adapter.get_info().backend{
+		println!("Device: {}", self.integrals.adapter.get_info().name);
+		println!("Backend: {}", match self.integrals.adapter.get_info().backend{
 			Backend::BrowserWebGpu => "Browser",
 			Backend::Dx12 => "DX12",
 			Backend::Vulkan => "Vulkan",
@@ -387,7 +326,14 @@ impl Render {
 	}
 }
 
-impl RenderAgnostics {
+struct RenderIntegrals {
+	pub surface: Surface,
+	pub adapter: Adapter,
+	pub device: Device,
+	pub queue: Queue,
+	pub surface_config: SurfaceConfiguration,
+} 
+impl RenderIntegrals {
 	pub fn new(window: &Window) -> Self {
 		let instance = Instance::new(InstanceDescriptor{
 			backends: Backends::DX12,
@@ -444,8 +390,47 @@ impl RenderAgnostics {
 
 //TODO: make pre compiler
 #[allow(unused_macros)]
-macro_rules! shaderConstsFormat {
+macro_rules! shader_preprocessor {
 	() => {
 		todo!()		
 	};
+}
+
+#[repr(C)]
+pub struct _TemporalInputData {
+	pub temporals: UVec4, //time, frame, time delta, frame delta
+}
+//#[repr(C, align(8))]
+#[repr(C)]
+pub struct ViewInputData {
+	pub pos: Vec4, //x, y, z, pad
+	pub rads: Vec4, //yaw, pitch, roll, pad(change to fov)
+}
+#[repr(C)]
+pub struct _LightInputData {
+	pub pos: Vec4,//x y z pad
+	pub dir: Vec4,//x, y, z, fov 
+	pub rgb: Vec4,//r g b pad //a could be used to increase itensity?
+}
+
+/*
+ there structs are required, 
+ used to size allocation of data in the device
+ */
+#[repr(C)]
+struct ViewData {
+	pos: Vec3,
+	len: f32,
+	rgba: u32, 		
+	normal: u32, 
+}
+//find some form of direction that does not reqeat ie (1, 1), (2, 2)
+#[repr(C)]
+struct LightData {
+	rgb: f32, //rgb, parellax?
+	direction: u32, //xyz, dist?
+}
+#[repr(C)]
+struct LightVolume {
+	data: [LightData; 4],
 }

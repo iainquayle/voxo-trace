@@ -80,16 +80,14 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			stack[depth + 1] = octant.index;
 			depth += 1;
 			level_size >>= 1u;
+			//shifts and mask with one would take away cast
 			i_center += level_size * (-1 + 2 * vec3<i32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 			center = vec3<f32>(i_center - MAX_SIZE);
 
 			octant_index = calculate_octant(position, center, direction);
 			octant = fetch_octant(stack[depth], octant_index);
 			bottom = octant.index == NULL_INDEX;
-			//bottom = octant.index == NULL_INDEX 
-			//	|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
 		}  
-		
 		if(bottom) {
 			previous_octant = octant;
 		}
@@ -120,9 +118,6 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			octant = fetch_octant(stack[depth], octant_index);
 			bottom = octant.index == NULL_INDEX 
 				|| length * lod_factor > f32(level_size);
-			//bottom = octant.index == NULL_INDEX 
-			//	|| length * lod_factor > f32(level_size)
-			//	|| pow(f32(iters) / f32(MAX_ITERS), 8.0) * f32(MAX_SIZE) > f32(level_size);
 		
 			//the density should add colours, while the alpha should subtract(ie only let through its colour, that being said think of water and how it only refracts blue)
 			//suppositione there is a colour behind a coloured smoke, the colours should add but if behind glass, the glass wont allow the coluor through

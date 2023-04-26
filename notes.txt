@@ -1,3 +1,7 @@
+for any vector where all components are under half of the max distance, there is another vector that is the same
+there may be a case then to be made for the use of bit fields
+	this can create an expressive system the only needs information for colout as direction is encoded  
+
 for light volumes, it could be a combination of on demand tracing and only using propogation 
 in order to get more fine detail shadows, trace a certain distance towards the light stepping up in the tree
 	if nothing is found take the light at its perscribe value, otherwise modify
