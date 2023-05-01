@@ -47,10 +47,10 @@ const POSITIVE_MASKS: vec3<u32> = vec3<u32>(POSITIVE_X, POSITIVE_Y, POSITIVE_Z);
 @group(0) @binding(200) var<storage, write> view: ViewData;
 @group(0) @binding(300) var output: texture_storage_2d<rgba8unorm, write>;
 
-@compute @workgroup_size(8u, 4u)
+@compute @workgroup_size(8u, 8u)
 fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
-	var lod_factor: f32 = sin(FOV / dims.x);
+	var lod_factor: f32 = sin(FOV / dims.x) * 2.0;
 
 	var direction: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.direction.xyz));
 	var inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction;
@@ -81,6 +81,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			depth += 1;
 			level_size >>= 1u;
 			//shifts and mask with one would take away cast
+			//may also consider moving to a bool mask that, that new centers and new oct index can be calculated off of directly
 			i_center += level_size * (-1 + 2 * vec3<i32>((octant_index & POSITIVE_MASKS) == POSITIVE_MASKS)); 
 			center = vec3<f32>(i_center - MAX_SIZE);
 
@@ -96,9 +97,20 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			let to_zero: vec3<f32> = (center - position) * inverse_vec;
 			var valid: vec3<bool> = to_zero > 0.0 && position != center;
 			valid &= (to_zero <= to_zero.zxy || !valid.zxy) && (to_zero < to_zero.yzx || !valid.yzx);
-			let next_position = select(position + direction * dot(vec3<f32>(valid), to_zero), center, valid); 
+			//let next_position = select(position + direction * dot(vec3<f32>(valid), to_zero), center, valid); 
+			//for some reason this runs more stable than the select
+			//bench mark putting valid back into the following if block
+			//while the averages seem fine, the lows are very volatile
+			var next_position = vec3<f32>(0.0);
+			if(valid.x) {
+				next_position = vec3<f32>(center.x, position.yz + direction.yz * to_zero.x);
+			} else if(valid.y) {
+				next_position = position + direction * to_zero.y;
+				next_position.y = center.y;
+			} else if(valid.z) {
+				next_position = vec3<f32>(position.xy + direction.xy * to_zero.z, center.z);
+			}
 
-			//can also use position == next instead of valid
 			moving_up = any(abs(center - next_position) > f32(level_size)) || all(!valid);
 	
 			//moving up

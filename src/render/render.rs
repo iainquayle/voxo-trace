@@ -23,11 +23,12 @@ const VIEW_DATA_INDEX: u32 = 200;
 const OUTPUT_TEXTURE_INDEX: u32 = 300;
 
 const WORK_GROUP_WIDTH: u32 = 8;
-const WORK_GROUP_HEIGHT: u32 = 4;
+const WORK_GROUP_HEIGHT: u32 = 8;
 
 const LIGHT_GRID_DIMENSION: usize = 128;
 
 //macro_rules! SHADERS_PATH {() => {"shaders.wgsl"};}
+//so far exper runs better, need to double check the old method prior to the flattened next plane
 macro_rules! SHADERS_PATH {() => {"exper_shaders.wgsl"};}
 macro_rules! VIEW_TRACE_ENTRY {() => {"view_trace"};}
 

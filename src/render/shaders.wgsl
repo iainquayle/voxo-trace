@@ -47,7 +47,7 @@ const POSITIVE_MASKS: vec3<u32> = vec3<u32>(POSITIVE_X, POSITIVE_Y, POSITIVE_Z);
 @group(0) @binding(200) var<storage, write> view: ViewData;
 @group(0) @binding(300) var output: texture_storage_2d<rgba8unorm, write>;
 
-@compute @workgroup_size(8u, 4u)
+@compute @workgroup_size(8u, 8u)
 fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
 	var lod_factor: f32 = sin(FOV / dims.x);
@@ -59,8 +59,8 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	var octant_index: u32 = 0u;
 	var moving_up: bool = false;
 
-	var direction_vec: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.direction.xyz));
-	var inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction_vec;
+	var direction: vec3<f32> = normalize(rotation(get_view_vec(vec2<f32>(global_id.xy), dims), camera.direction.xyz));
+	var inverse_vec: vec3<f32> = vec3<f32>(1.0) / direction;
 	var i_center: vec3<i32> = vec3<i32>(MAX_SIZE);
 	var center: vec3<f32> = vec3<f32>(0.0);
 	var position: vec3<f32> = camera.position.xyz; 
@@ -74,7 +74,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	
 	loop { if(depth < 0 || transmittance.w < MIN_TRANS || iters > MAX_ITERS) {break;}
 		octant_index = dot(POSITIVE_MASKS,
-			vec3<u32>(position > center || ((position == center) && direction_vec > 0.0))); 	
+			vec3<u32>(position > center || ((position == center) && direction > 0.0))); 	
 
 		let octant: Octant = dag.nodes[stack[depth]].octants[octant_index];
 		let bottom: bool = octant.index == NULL_INDEX 
@@ -95,7 +95,19 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			let to_zero: vec3<f32> = (center - position) * inverse_vec;
 			var valid: vec3<bool> = to_zero > 0.0 && position != center;
 			valid &= (to_zero <= to_zero.zxy || !valid.zxy) && (to_zero < to_zero.yzx || !valid.yzx);
-			let next_position = select(position + direction_vec * dot(vec3<f32>(valid), to_zero), center, valid); 
+			//let next_position = select(position + direction * dot(vec3<f32>(valid), to_zero), center, valid); 
+			//for some reason this runs more stable than the select
+			//bench mark putting valid back into the following if block
+			//while the averages seem fine, the lows are very volatile
+			var next_position = vec3<f32>(0.0);
+			if(valid.x) {
+				next_position = vec3<f32>(center.x, position.yz + direction.yz * to_zero.x);
+			} else if(valid.y) {
+				next_position = position + direction * to_zero.y;
+				next_position.y = center.y;
+			} else if(valid.z) {
+				next_position = vec3<f32>(position.xy + direction.xy * to_zero.z, center.z);
+			}
 
 			//can also use position == next instead of valid
 			moving_up = any(abs(center - next_position) > f32(level_size)) || all(!valid);
@@ -107,7 +119,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			level_size <<= u32(moving_up);
 			
 			//moving forward
-			let len = dot(next_position.xyz - position, direction_vec);
+			let len = dot(next_position.xyz - position, direction);
 			length += (len * f32(!moving_up));
 			if(!moving_up) {
 				position = next_position.xyz;
@@ -150,10 +162,10 @@ fn get_view_vec(coords: vec2<f32>, dims: vec2<f32>) -> vec3<f32> {
 	return cross(vec3<f32>(cos(thetas.x), 0.0, sin(thetas.x)),
 		vec3<f32>(0.0, cos(thetas.y), sin(thetas.y)));
 }
-fn rotation(direction_vec: vec3<f32>, radians: vec3<f32>) -> vec3<f32> {
-	var new_vec = vec3<f32>(direction_vec.x,
-		cos(radians.y) * direction_vec.y + sin(radians.y) * direction_vec.z,
-		cos(radians.y) * direction_vec.z - sin(radians.y) * direction_vec.y);
+fn rotation(direction: vec3<f32>, radians: vec3<f32>) -> vec3<f32> {
+	var new_vec = vec3<f32>(direction.x,
+		cos(radians.y) * direction.y + sin(radians.y) * direction.z,
+		cos(radians.y) * direction.z - sin(radians.y) * direction.y);
 	return vec3<f32>(cos(radians.x) * new_vec.x - sin(radians.x) * new_vec.z,
 		new_vec.y,
 		cos(radians.x) * new_vec.z + sin(radians.x) * new_vec.x);
