@@ -8,6 +8,9 @@ edition = "2021"
 #[profile.release]
 #lto = "true"
 
+#[lib]
+#proc-macro = true
+
 [dependencies]
 wgpu = "0.15"
 winit = "0.28"

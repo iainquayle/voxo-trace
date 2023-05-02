@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write};
+use std::{fs, fs::File, io::Write};
 use pollster::FutureExt;
 use wgpu::{*, util::{*}};
 use glam::{Vec3, Vec4, UVec4};
@@ -15,6 +15,28 @@ intermediates: 200-299
 output: 300
  */
 //TODO: change these to enums? when the preprocessor is created
+//other option is to use procedural macros to generate constants that arent already defined
+//however having them defined in one place is nice
+#[derive(Copy, Clone)]
+enum ShaderSharedConstants {
+	Group,
+	Dag,
+	ViewTraceInput,
+	TemporalInput,
+	ViewData,
+	OutputTexture,
+	WorkGroupWidth,
+	WorkGroupHeight,
+	LightGridDimension,
+}
+impl ShaderSharedConstants{
+	pub(super) fn get_value(&self) -> u32 {
+		match self {
+			_ => {*self as u32} 
+		}
+	} 
+}
+
 const GROUP_INDEX: u32 = 0;
 const DAG_INDEX: u32 = 0;
 const VIEW_TRACE_INPUT_INDEX: u32 = 100;
@@ -28,8 +50,9 @@ const WORK_GROUP_HEIGHT: u32 = 8;
 const LIGHT_GRID_DIMENSION: usize = 128;
 
 //macro_rules! SHADERS_PATH {() => {"shaders.wgsl"};}
-//so far exper runs better, need to double check the old method prior to the flattened next plane
-macro_rules! SHADERS_PATH {() => {"exper_shaders.wgsl"};}
+//so far exper runs better. need to double checl non flattened valid mask
+//not sure where to put shaders later if they arenet baked in via macro
+macro_rules! SHADERS_PATH {() => {"./src/render/exper_shaders.wgsl"};}
 macro_rules! VIEW_TRACE_ENTRY {() => {"view_trace"};}
 
 pub struct Render {
@@ -44,6 +67,7 @@ pub struct Render {
 	//output_view: TextureView,
 
 	//dag_buffer: Buffer,
+	//
 	view_input_uniform: Buffer,
 	output_texture: Texture,
 
@@ -111,8 +135,11 @@ impl Render {
 					* integrals.surface_config.width) as usize 
 					* std::mem::size_of::<ViewData>(),
 					"view buffer")];
-		
-		let shader_module = integrals.device.create_shader_module(include_wgsl!(SHADERS_PATH!()));
+
+		let shader_module = integrals.device.create_shader_module(ShaderModuleDescriptor{
+			label: Some("shader module"),
+			source: ShaderSource::Wgsl(shader_preprocessor(SHADERS_PATH!().to_string()).into()),
+		});
 		let pipeline_layout = {
 			let buffer_entry = |binding_index: u32, buffer_type: BufferBindingType| {
 				BindGroupLayoutEntry {
@@ -157,42 +184,29 @@ impl Render {
 		});	
 
 		
-
-		/*
-		 */
 		let view_trace_bindgroups = {
 			let create_view_trace_bindgroup = |view: &Buffer| {
+				//seems binding resource has hidden lifetime, not sure how to access it for lifetime specified function, thus macro
+				macro_rules! create_bindgroup_entry {
+					($binding:expr, $resource:expr) => {
+						BindGroupEntry {
+							binding: $binding,
+							resource: $resource,
+						}
+				};}
 				integrals.device.create_bind_group(&BindGroupDescriptor {
 					label: Some("view trace bindgroup"),
 					layout: &view_trace_pipeline.get_bind_group_layout(GROUP_INDEX),
 					entries: &[
-						BindGroupEntry {
-							binding: DAG_INDEX,
-							resource: dag_buffer.as_entire_binding(),
-						},
-						BindGroupEntry {
-							binding: VIEW_TRACE_INPUT_INDEX,
-							resource: view_input_uniform.as_entire_binding(),
-						},
-						BindGroupEntry {
-							binding: VIEW_DATA_INDEX,
-							resource: view.as_entire_binding(),
-						},
-						BindGroupEntry {
-							binding: OUTPUT_TEXTURE_INDEX,
-							resource: BindingResource::TextureView(&output_texture.create_view(&wgpu::TextureViewDescriptor::default())),
-						},
+						create_bindgroup_entry!(DAG_INDEX, dag_buffer.as_entire_binding()),
+						create_bindgroup_entry!(VIEW_TRACE_INPUT_INDEX, view_input_uniform.as_entire_binding()),
+						create_bindgroup_entry!(VIEW_DATA_INDEX, view.as_entire_binding()),
+						create_bindgroup_entry!(OUTPUT_TEXTURE_INDEX, BindingResource::TextureView(&output_texture.create_view(&wgpu::TextureViewDescriptor::default()))),
 					],
 				})
 			};
 			[create_view_trace_bindgroup(&view_buffers[0]), create_view_trace_bindgroup(&view_buffers[1])]
 		};
-
-		/*
-		let create_final_bindgroup = || {
-			todo!();
-		};
-		*/
 
 
 		return Self {
@@ -364,10 +378,10 @@ impl RenderIntegrals {
 			limits.max_compute_workgroup_storage_size,
 			Limits::default().max_compute_workgroup_storage_size);
 		
-		let surface_capabilities = surface.get_capabilities(&adapter);
-		let surface_format = surface_capabilities.formats.iter().copied()
-			.filter(|f| f.describe().srgb)
-			.next().unwrap_or(surface_capabilities.formats[0]);
+		//let surface_capabilities = surface.get_capabilities(&adapter);
+		//let surface_format = surface_capabilities.formats.iter().copied()
+		//	.filter(|f| f.describe().srgb)
+		//	.next().unwrap_or(surface_capabilities.formats[0]);
 		let surface_config = SurfaceConfiguration {
 			usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST,
 			format: TextureFormat::Rgba8Unorm,//surface.get_preferred_format(&adapter).unwrap()
@@ -390,11 +404,16 @@ impl RenderIntegrals {
 }
 
 //TODO: make pre compiler
-#[allow(unused_macros)]
-macro_rules! shader_preprocessor {
-	() => {
-		todo!()		
-	};
+fn shader_preprocessor(path: String) -> String {
+	match fs::read_to_string(path) {
+		Ok(source) => {
+			source
+		},
+		Err(err) => {
+			println!("failed to read shader file: {}", err);
+			panic!();
+		}
+	}
 }
 
 #[repr(C)]

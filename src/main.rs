@@ -27,7 +27,7 @@ fn main() {
 	let mut event_loop = EventLoop::new();
 	let mut window = Window::new(WINDOW_WIDTH, WINDOW_HEIGHT, &event_loop);	
 
-	let mut logic = Logic::new(OctDag::new_test(TestDagType::Pillar, 8));
+	let mut logic = Logic::new(OctDag::new_test(TestDagType::Pillar, 6));
 	logic.dag.print_size();
 		
 	let mut render = Render::new(&window, &logic);
