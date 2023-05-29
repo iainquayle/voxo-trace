@@ -1,23 +1,19 @@
-use std::{fs, fs::File, io::Write};
-use pollster::FutureExt;
 use wgpu::{*, util::{*}};
 use glam::{Vec3, Vec4, UVec4};
+use std::{fs::File, io::Write, collections::HashMap};
+use strum::IntoEnumIterator;
+use strum_macros::{Display, EnumIter};
+use pollster::FutureExt;
 use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window};
 
 
 const REPORT_AFTER_FRAMES: u64 = 500;
 //const TARGET_FRAMES: u32 = 300;
 
-/*
-read only: 0-99
-inputs: 100-199
-intermediates: 200-299
-output: 300
- */
-//TODO: change these to enums? when the preprocessor is created
 //other option is to use procedural macros to generate constants that arent already defined
 //however having them defined in one place is nice
-#[derive(Copy, Clone)]
+//TODO: move to its own module, as having the dag depth and level size defined in one locvation would be useful
+#[derive(Copy, Clone, Debug, Display, EnumIter)]
 enum ShaderSharedConstants {
 	Group,
 	Dag,
@@ -30,11 +26,25 @@ enum ShaderSharedConstants {
 	LightGridDimension,
 }
 impl ShaderSharedConstants{
+	pub(super) fn get_index(&self) -> u32 {
+		*self as u32
+	}
 	pub(super) fn get_value(&self) -> u32 {
 		match self {
-			_ => {*self as u32} 
+			Self::WorkGroupWidth => 8,
+			Self::WorkGroupHeight => 8,
+			Self::LightGridDimension => 128,
+			_ => {self.get_index()} 
 		}
 	} 
+	fn get_definition(&self) -> Option<String> {
+		match self {
+			_ => {Some(self.get_value().to_string())},
+		}
+	}
+	pub fn generate_defintions() -> Vec<(String, Option<String>)> {
+		Self::iter().map(|constant| (constant.to_string(), constant.get_definition())).collect()	
+	}
 }
 
 const GROUP_INDEX: u32 = 0;
@@ -52,7 +62,7 @@ const LIGHT_GRID_DIMENSION: usize = 128;
 //macro_rules! SHADERS_PATH {() => {"shaders.wgsl"};}
 //so far exper runs better. need to double checl non flattened valid mask
 //not sure where to put shaders later if they arenet baked in via macro
-macro_rules! SHADERS_PATH {() => {"./src/render/exper_shaders.wgsl"};}
+macro_rules! SHADERS_PATH {() => {"exper_shaders.wgsl"};}
 macro_rules! VIEW_TRACE_ENTRY {() => {"view_trace"};}
 
 pub struct Render {
@@ -67,7 +77,6 @@ pub struct Render {
 	//output_view: TextureView,
 
 	//dag_buffer: Buffer,
-	//
 	view_input_uniform: Buffer,
 	output_texture: Texture,
 
@@ -138,7 +147,7 @@ impl Render {
 
 		let shader_module = integrals.device.create_shader_module(ShaderModuleDescriptor{
 			label: Some("shader module"),
-			source: ShaderSource::Wgsl(shader_preprocessor(SHADERS_PATH!().to_string()).into()),
+			source: ShaderSource::Wgsl(shader_preprocessor(include_str!(SHADERS_PATH!()).into(), ShaderSharedConstants::generate_defintions()).into()),
 		});
 		let pipeline_layout = {
 			let buffer_entry = |binding_index: u32, buffer_type: BufferBindingType| {
@@ -300,7 +309,6 @@ impl Render {
 			self.min_frame_time = frame_time;
 		}
 		if self.frame_counter % REPORT_AFTER_FRAMES  == 0 {
-			//println!("fps: {}", 500.0 / ((state.start_time.elapsed().as_millis() - self.fps_prev_time) as f32 / 1000.0));
 			println!("frame time (milis): {:.2}, max: {:.2}, min: {:.2}\nideal ave fps: {:.2}, min: {:.2}, max: {:.2}\n--------------------------------------------------------------",
 				self.ave_frame_time / 1000.0, self.max_frame_time as f64 / 1000.0, self.min_frame_time as f64 / 1000.0,
 				(1000000.0 / self.ave_frame_time), (1000000.0 / self.max_frame_time as f64), (1000000.0 / self.min_frame_time as f64));
@@ -404,16 +412,10 @@ impl RenderIntegrals {
 }
 
 //TODO: make pre compiler
-fn shader_preprocessor(path: String) -> String {
-	match fs::read_to_string(path) {
-		Ok(source) => {
-			source
-		},
-		Err(err) => {
-			println!("failed to read shader file: {}", err);
-			panic!();
-		}
-	}
+fn shader_preprocessor(source: String, definitions: Vec<(String, Option<String>)>) -> String {
+	let definitions_map: HashMap<_, _> = HashMap::from_iter(definitions);
+	println!("{:?}", definitions_map);
+	source
 }
 
 #[repr(C)]
