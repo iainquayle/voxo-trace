@@ -42,10 +42,10 @@ const POSITIVE_Z: u32 = 4u;
 const NEGATIVE_OCTANT: u32 = 0u;
 const POSITIVE_MASKS: vec3<u32> = vec3<u32>(POSITIVE_X, POSITIVE_Y, POSITIVE_Z);
 
-@group(0) @binding(0) var<storage, read> dag: Dag;
-@group(0) @binding(100) var<uniform> camera: ViewInput;
-@group(0) @binding(200) var<storage, write> view: ViewData;
-@group(0) @binding(300) var output: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(1) var<storage, read> dag: Dag;
+@group(0) @binding(2) var<uniform> camera: ViewInput;
+@group(0) @binding(4) var<storage, write> view: ViewData;
+@group(0) @binding(5) var output: texture_storage_2d<rgba8unorm, write>;
 
 @compute @workgroup_size(8u, 8u)
 fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {

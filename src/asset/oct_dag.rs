@@ -1,4 +1,4 @@
-use std::{mem::size_of};
+use std::{mem::size_of, hash::{Hash}, cmp::{Eq, Ord, Ordering}, collections::BTreeSet};
 extern crate glam;
 use glam::{Vec3, Vec4, IVec3, Vec4Swizzles, i32::ivec3};
 
@@ -18,27 +18,6 @@ const OCTANT_LIST: [IVec3; 8] =
 	ivec3(1, 1, 1),];
 const MASK_8BIT: u32 = 0x000000FF;
 
-
-/*
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Hash)]
-struct NewNode {
-	pub tree_indices: [u32; 8],
-	pub volume_index: u32, 
-}
-struct Volume<T> {
-	pub volume: [T; 8],
-}
-struct NewOctant {
-	pub colour: u32, //rgba
-	pub normal: u32, //xyz desnity //change name to volume, or physical
-	pub extra: u32, // 8 shine, 8 radiance, 16 or 8 frames, 
-}
-struct Dag<T> {
-	pub nodes: Vec<NewNode>,
-	pub volumes: Vec<Volume<T>>,
-}
-*/
 type DagAddr = u32;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Hash)]
@@ -61,6 +40,10 @@ pub struct OctDag {
 //TODO: consider making fn that creates u8 representation of data for render
 //TODO: consider making it possible to generate each virst octant in seperate threads
 impl OctDag {
+	pub fn new_from_fn(max_depth: u32) -> Self {
+		todo!();
+	}
+
 	pub fn new_test(dag_type: TestDagType, max_depth: u32) -> Self {
 		if max_depth > 16  {
 			panic!("depth out of bounds");
@@ -187,8 +170,8 @@ impl OctDag {
 
 			let mut cummulative_denisty = 0.0;
 			for i in 0..OCTANT_COUNT {
-				let colour = unpack_f32_u32(node.octants[i].colour);
-				let normal = unpack_f32_u32(node.octants[i].normal);
+				let colour = unpack_u32_f32(node.octants[i].colour);
+				let normal = unpack_u32_f32(node.octants[i].normal);
 				cummulative_denisty += normal.w;
 				r += colour.x * normal.w;
 				g += colour.y * normal.w;
@@ -220,6 +203,7 @@ impl OctDag {
 		println!("Node count: {},  Size in Mb: {}", self.nodes.len(), (self.nodes.len() * size_of::<Node>()) as f32 / 1000000.0)
 	}
 }
+
 
 impl Octant {
 	pub fn difference(&self, other: &Self) -> i32 {
@@ -355,11 +339,40 @@ impl ColourType {
 }
 
 /*
+
+impl PartialOrd for Node {
+}
+ */
+
+/*
 positive values are considered to be inside a volume
 they do not need to be bound at or below 1
 len should be in relation to the level size tho, so long as it uses the pos
  */
-fn unpack_f32_u32(data: u32) -> Vec4 {
+
+impl Node {
+	pub fn new() -> Node {
+		return Node{octants: [Octant::new(); 8]};
+	}
+	pub fn difference(&self, other: &Self) -> i32 {
+		let mut accumulation = 0;
+		for (x, y) in self.octants.into_iter().zip(other.octants.into_iter()) {
+			if x.index > y.index {
+				return std::i32::MAX; 
+			} else if x.index < y.index {
+				return std::i32::MIN; 
+			}
+		}
+		accumulation 
+	}
+}
+impl Octant {
+	pub fn new() -> Octant {
+		return Octant{index: NULL_INDEX, colour: 0, normal: 0, extra: 0};
+	}
+}
+
+fn unpack_u32_f32(data: u32) -> Vec4 {
 	let bytes = unpack_u8_u32(data);
 	Vec4::new(bytes.0 as f32 / 255.0, bytes.1 as f32 / 255.0, bytes.2 as f32 / 255.0, bytes.3 as f32 / 255.0)
 }
@@ -378,16 +391,4 @@ fn pack_u8_u32(data: (u8, u8, u8, u8)) -> u32 {
 	((data.1 as u32) << 16) |
 	((data.2 as u32) << 8) |
 	(data.3 as u32)
-}
-
-impl Node {
-	pub fn new() -> Node {
-		return Node{octants: [Octant::new(); 8]};
-	}
-}
-
-impl Octant {
-	pub fn new() -> Octant {
-		return Octant{index: NULL_INDEX, colour: 0, normal: 0, extra: 0};
-	}
 }

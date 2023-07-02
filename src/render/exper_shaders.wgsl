@@ -42,12 +42,12 @@ const POSITIVE_Z: u32 = 4u;
 const NEGATIVE_OCTANT: u32 = 0u;
 const POSITIVE_MASKS: vec3<u32> = vec3<u32>(POSITIVE_X, POSITIVE_Y, POSITIVE_Z);
 
-@group(0) @binding(0) var<storage, read> dag: Dag;
-@group(0) @binding(100) var<uniform> camera: ViewInput;
-@group(0) @binding(200) var<storage, write> view: ViewData;
-@group(0) @binding(300) var output: texture_storage_2d<rgba8unorm, write>;
+@group(/*GROUP_INDEX*/0/**/) @binding(/*DAG_INDEX*/0/**/) var<storage, read> dag: Dag;
+@group(/*GROUP_INDEX*/0/**/) @binding(/*VIEW_INPUT_INDEX*/1/**/) var<uniform> camera: ViewInput;
+@group(/*GROUP_INDEX*/0/**/) @binding(/*VIEW_DATA_INDEX*/2/**/) var<storage, write> view: ViewData;
+@group(/*GROUP_INDEX*/0/**/) @binding(/*OUTPUT_TEXTURE_INDEX*/3/**/) var output: texture_storage_2d<rgba8unorm, write>;
 
-@compute @workgroup_size(8u, 8u)
+@compute @workgroup_size(/*WORK_GROUP_WIDTH*/8u/**/, /*WORK_GROUP_HEIGHT*/8u/**/)
 fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let dims = vec2<f32>(textureDimensions(output));
 	var lod_factor: f32 = sin(FOV / dims.x) * 2.0;
@@ -98,7 +98,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			var valid: vec3<bool> = to_zero > 0.0 && position != center;
 			valid &= (to_zero <= to_zero.zxy || !valid.zxy) && (to_zero < to_zero.yzx || !valid.yzx);
 			//let next_position = select(position + direction * dot(vec3<f32>(valid), to_zero), center, valid); 
-			//for some reason this runs more stable than the select
+			//for some reason this runs more stable than the select despite techinically having more optionally ran code
 			//bench mark putting valid back into the following if block
 			//while the averages seem fine, the lows are very volatile
 			var next_position = vec3<f32>(0.0);
@@ -114,6 +114,7 @@ fn view_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 			moving_up = any(abs(center - next_position) > f32(level_size)) || all(!valid);
 	
 			//moving up
+			//this branchless seems to run better
 			i_center += (level_size * (-1 + 2 * vec3<i32>((i_center - level_size) % (level_size * 4) == 0))) * i32(moving_up); 
 			center = vec3<f32>(i_center - MAX_SIZE);
 			depth -= i32(moving_up); 

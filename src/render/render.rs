@@ -1,58 +1,18 @@
 use wgpu::{*, util::{*}};
 use glam::{Vec3, Vec4, UVec4};
-use std::{fs::File, io::Write, collections::HashMap};
-use strum::IntoEnumIterator;
-use strum_macros::{Display, EnumIter};
+use std::{fs::File, io::Write};
 use pollster::FutureExt;
-use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window};
-
+use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window, render::shader_processing::{unique_index, map_constants, shader_preprocessor}};
 
 const REPORT_AFTER_FRAMES: u64 = 500;
 //const TARGET_FRAMES: u32 = 300;
 
-//other option is to use procedural macros to generate constants that arent already defined
-//however having them defined in one place is nice
-//TODO: move to its own module, as having the dag depth and level size defined in one locvation would be useful
-#[derive(Copy, Clone, Debug, Display, EnumIter)]
-enum ShaderSharedConstants {
-	Group,
-	Dag,
-	ViewTraceInput,
-	TemporalInput,
-	ViewData,
-	OutputTexture,
-	WorkGroupWidth,
-	WorkGroupHeight,
-	LightGridDimension,
-}
-impl ShaderSharedConstants{
-	pub(super) fn get_index(&self) -> u32 {
-		*self as u32
-	}
-	pub(super) fn get_value(&self) -> u32 {
-		match self {
-			Self::WorkGroupWidth => 8,
-			Self::WorkGroupHeight => 8,
-			Self::LightGridDimension => 128,
-			_ => {self.get_index()} 
-		}
-	} 
-	fn get_definition(&self) -> Option<String> {
-		match self {
-			_ => {Some(self.get_value().to_string())},
-		}
-	}
-	pub fn generate_defintions() -> Vec<(String, Option<String>)> {
-		Self::iter().map(|constant| (constant.to_string(), constant.get_definition())).collect()	
-	}
-}
-
 const GROUP_INDEX: u32 = 0;
-const DAG_INDEX: u32 = 0;
-const VIEW_TRACE_INPUT_INDEX: u32 = 100;
-const TEMPORAL_INPUT_INDEX: u32 = 102;
-const VIEW_DATA_INDEX: u32 = 200;
-const OUTPUT_TEXTURE_INDEX: u32 = 300;
+const DAG_INDEX: u32 = unique_index!();
+const VIEW_INPUT_INDEX: u32 = unique_index!();
+const TEMPORAL_INPUT_INDEX: u32 = unique_index!();
+const VIEW_DATA_INDEX: u32 = unique_index!();
+const OUTPUT_TEXTURE_INDEX: u32 = unique_index!();
 
 const WORK_GROUP_WIDTH: u32 = 8;
 const WORK_GROUP_HEIGHT: u32 = 8;
@@ -132,7 +92,7 @@ impl Render {
 			})
 		};
 
-		let light_grid_buffers =  
+		let light_volume_buffers =  
 			[create_buffer(LIGHT_GRID_DIMENSION.pow(3) * std::mem::size_of::<LightVolume>(), "light grid buffer"),
 			create_buffer(LIGHT_GRID_DIMENSION.pow(3) * std::mem::size_of::<LightVolume>(), "light grid buffer"),];
 		let view_buffers  =  
@@ -147,7 +107,9 @@ impl Render {
 
 		let shader_module = integrals.device.create_shader_module(ShaderModuleDescriptor{
 			label: Some("shader module"),
-			source: ShaderSource::Wgsl(shader_preprocessor(include_str!(SHADERS_PATH!()).into(), ShaderSharedConstants::generate_defintions()).into()),
+			source: ShaderSource::Wgsl(shader_preprocessor(include_str!(SHADERS_PATH!()).into(), map_constants!(
+				GROUP_INDEX, DAG_INDEX, VIEW_INPUT_INDEX, VIEW_DATA_INDEX, TEMPORAL_INPUT_INDEX, OUTPUT_TEXTURE_INDEX, LIGHT_GRID_DIMENSION, ["{}u"; WORK_GROUP_WIDTH, WORK_GROUP_HEIGHT]
+			)).into()),
 		});
 		let pipeline_layout = {
 			let buffer_entry = |binding_index: u32, buffer_type: BufferBindingType| {
@@ -169,7 +131,7 @@ impl Render {
 					label: Some("view trace bind group layout"),
 					entries: &[
 						buffer_entry(DAG_INDEX, BufferBindingType::Storage { read_only: true }),
-						buffer_entry(VIEW_TRACE_INPUT_INDEX, BufferBindingType::Uniform),
+						buffer_entry(VIEW_INPUT_INDEX, BufferBindingType::Uniform),
 						buffer_entry(VIEW_DATA_INDEX, BufferBindingType::Storage { read_only: false }),
 						BindGroupLayoutEntry {
 							binding: OUTPUT_TEXTURE_INDEX,
@@ -208,7 +170,7 @@ impl Render {
 					layout: &view_trace_pipeline.get_bind_group_layout(GROUP_INDEX),
 					entries: &[
 						create_bindgroup_entry!(DAG_INDEX, dag_buffer.as_entire_binding()),
-						create_bindgroup_entry!(VIEW_TRACE_INPUT_INDEX, view_input_uniform.as_entire_binding()),
+						create_bindgroup_entry!(VIEW_INPUT_INDEX, view_input_uniform.as_entire_binding()),
 						create_bindgroup_entry!(VIEW_DATA_INDEX, view.as_entire_binding()),
 						create_bindgroup_entry!(OUTPUT_TEXTURE_INDEX, BindingResource::TextureView(&output_texture.create_view(&wgpu::TextureViewDescriptor::default()))),
 					],
@@ -251,10 +213,10 @@ impl Render {
 	 *take away the question mark below and just us an expect
 	 */
 	pub fn render(&mut self, state: &Logic) -> Result<(), SurfaceError> {
-			self.update_camera(ViewInputData { 
-					pos: Into::<Vec4>::into((state.camera_pose().position, 0.0)),
-					rads: Into::<Vec4>::into((state.camera_orientaion_vec3(), 0.0)),
-			});
+		self.update_camera(ViewInputData { 
+				pos: Into::<Vec4>::into((state.camera_pose().position, 0.0)),
+				rads: Into::<Vec4>::into((state.camera_orientaion_vec3(), 0.0)),
+		});
 
 		let mut encoder = self.integrals.device.create_command_encoder(&CommandEncoderDescriptor{label: Some("view trace render pass encoder")});
 		
@@ -299,15 +261,11 @@ impl Render {
 		self.integrals.queue.submit(std::iter::once(encoder.finish()));
 		surface_texture.present();
 		let frame_time = state.start_time.elapsed().as_micros() - self.previous_frame_time;
-		
+
 		self.frame_times_micros[(self.frame_counter % REPORT_AFTER_FRAMES) as usize] = frame_time as f64 / 1000.0;
 		self.ave_frame_time = self.ave_frame_time + frame_time as f64 * 1.0 / REPORT_AFTER_FRAMES as f64;
-		if self.max_frame_time < frame_time {
-			self.max_frame_time = frame_time;
-		}
-		if self.min_frame_time > frame_time {
-			self.min_frame_time = frame_time;
-		}
+		self.max_frame_time = self.max_frame_time.max(frame_time); 
+		self.min_frame_time = self.min_frame_time.min(frame_time);
 		if self.frame_counter % REPORT_AFTER_FRAMES  == 0 {
 			println!("frame time (milis): {:.2}, max: {:.2}, min: {:.2}\nideal ave fps: {:.2}, min: {:.2}, max: {:.2}\n--------------------------------------------------------------",
 				self.ave_frame_time / 1000.0, self.max_frame_time as f64 / 1000.0, self.min_frame_time as f64 / 1000.0,
@@ -409,13 +367,6 @@ impl RenderIntegrals {
 			surface_config: surface_config,
 		}
 	} 
-}
-
-//TODO: make pre compiler
-fn shader_preprocessor(source: String, definitions: Vec<(String, Option<String>)>) -> String {
-	let definitions_map: HashMap<_, _> = HashMap::from_iter(definitions);
-	println!("{:?}", definitions_map);
-	source
 }
 
 #[repr(C)]
