@@ -354,8 +354,11 @@ impl Node {
 	pub fn new() -> Node {
 		return Node{octants: [Octant::new(); 8]};
 	}
+	/*
+	   a possible option for reuse is the culling of inefficent nodes
+		suppose a node has one octant that only has an extremely small amount of leaf voxels and should be culled to a leaf node
+	 */
 	pub fn difference(&self, other: &Self) -> i32 {
-		let mut accumulation = 0;
 		for (x, y) in self.octants.into_iter().zip(other.octants.into_iter()) {
 			if x.index > y.index {
 				return std::i32::MAX; 
@@ -363,12 +366,24 @@ impl Node {
 				return std::i32::MIN; 
 			}
 		}
-		accumulation 
+		let mut positive: f32 = 0.0;
+		let mut negative: f32 = 0.0;
+		for (x, y) in self.octants.into_iter().zip(other.octants.into_iter()) {
+			let rgba_delta = unpack_u32_f32(x.colour) - unpack_u32_f32(y.colour);
+			let normal_delta = unpack_u32_f32(x.colour) - unpack_u32_f32(y.colour);
+			let extra_delta = unpack_u32_f32(x.colour) - unpack_u32_f32(y.colour);
+			positive += rgba_delta.x.max(0.0) + rgba_delta.y.max(0.0) + rgba_delta.z.max(0.0) + rgba_delta.w.max(0.0);
+			negative -= rgba_delta.x.min(0.0) + rgba_delta.y.min(0.0) + rgba_delta.z.min(0.0) + rgba_delta.w.min(0.0);
+		}
+		0
 	}
 }
 impl Octant {
 	pub fn new() -> Octant {
 		return Octant{index: NULL_INDEX, colour: 0, normal: 0, extra: 0};
+	}
+	pub fn difference(&self, other: &Self) -> i32 {
+		todo!();
 	}
 }
 
