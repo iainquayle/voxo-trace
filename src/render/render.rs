@@ -2,7 +2,7 @@ use wgpu::{*, util::{*}};
 use glam::{Vec3, Vec4, UVec4};
 use std::{fs::File, io::Write};
 use pollster::FutureExt;
-use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window, render::shader_processing::{unique_index, map_constants, shader_preprocessor}};
+use crate::{asset::oct_dag::{Node}, logic::logic::Logic, window::Window, render::{shader_structs::*, shader_processing::*}};
 
 const REPORT_AFTER_FRAMES: u64 = 500;
 //const TARGET_FRAMES: u32 = 300;
@@ -367,43 +367,4 @@ impl RenderIntegrals {
 			surface_config: surface_config,
 		}
 	} 
-}
-
-#[repr(C)]
-pub struct _TemporalInputData {
-	pub temporals: UVec4, //time, frame, time delta, frame delta
-}
-//#[repr(C, align(8))]
-#[repr(C)]
-pub struct ViewInputData {
-	pub pos: Vec4, //x, y, z, pad
-	pub rads: Vec4, //yaw, pitch, roll, pad(change to fov)
-}
-#[repr(C)]
-pub struct _LightInputData {
-	pub pos: Vec4,//x y z pad
-	pub dir: Vec4,//x, y, z, fov 
-	pub rgb: Vec4,//r g b pad //a could be used to increase itensity?
-}
-
-/*
- there structs are required, 
- used to size allocation of data in the device
- */
-#[repr(C)]
-struct ViewData {
-	pos: Vec3,
-	len: f32,
-	rgba: u32, 		
-	normal: u32, 
-}
-//find some form of direction that does not reqeat ie (1, 1), (2, 2)
-#[repr(C)]
-struct LightData {
-	rgb: f32, //rgb, parellax?
-	direction: u32, //xyz, dist?
-}
-#[repr(C)]
-struct LightVolume {
-	data: [LightData; 4],
 }

@@ -41,6 +41,7 @@ pub struct OctDag {
 //TODO: consider making it possible to generate each virst octant in seperate threads
 impl OctDag {
 	pub fn new_from_fn(max_depth: u32) -> Self {
+		
 		todo!();
 	}
 
@@ -103,7 +104,7 @@ impl OctDag {
 			max_vol.z /= norm_len;
 			max_vol.w /= norm_len;
 
-			//max_vol.yzw() = max_vol.yzw().normalize_or_zero();
+			//max_vol.yzw() = max_vol.yzw().normalize_or_ZERO;
 
 			octant.normal = pack_f32_u32(Vec4::new(max_vol.y, max_vol.z, max_vol.w, 1.0));
 
@@ -201,14 +202,6 @@ impl OctDag {
 	}
 	pub fn print_size(&self) {
 		println!("Node count: {},  Size in Mb: {}", self.nodes.len(), (self.nodes.len() * size_of::<Node>()) as f32 / 1000000.0)
-	}
-}
-
-
-impl Octant {
-	pub fn difference(&self, other: &Self) -> i32 {
-		//if self.index == other.index {0}
-		todo!()
 	}
 }
 
@@ -358,32 +351,35 @@ impl Node {
 	   a possible option for reuse is the culling of inefficent nodes
 		suppose a node has one octant that only has an extremely small amount of leaf voxels and should be culled to a leaf node
 	 */
-	pub fn difference(&self, other: &Self) -> i32 {
+	pub fn difference(&self, other: &Self) -> f32 {
 		for (x, y) in self.octants.into_iter().zip(other.octants.into_iter()) {
 			if x.index > y.index {
-				return std::i32::MAX; 
+				return std::f32::MAX; 
 			} else if x.index < y.index {
-				return std::i32::MIN; 
+				return std::f32::MIN; 
 			}
 		}
-		let mut positive: f32 = 0.0;
-		let mut negative: f32 = 0.0;
+		let mut positive = Vec4::ZERO;
+		let mut negative = Vec4::ZERO;
 		for (x, y) in self.octants.into_iter().zip(other.octants.into_iter()) {
 			let rgba_delta = unpack_u32_f32(x.colour) - unpack_u32_f32(y.colour);
 			let normal_delta = unpack_u32_f32(x.colour) - unpack_u32_f32(y.colour);
 			let extra_delta = unpack_u32_f32(x.colour) - unpack_u32_f32(y.colour);
-			positive += rgba_delta.x.max(0.0) + rgba_delta.y.max(0.0) + rgba_delta.z.max(0.0) + rgba_delta.w.max(0.0);
-			negative -= rgba_delta.x.min(0.0) + rgba_delta.y.min(0.0) + rgba_delta.z.min(0.0) + rgba_delta.w.min(0.0);
+			positive += rgba_delta.max(Vec4::ZERO) + normal_delta.max(Vec4::ZERO) + extra_delta.max(Vec4::ZERO);
+			negative += rgba_delta.min(Vec4::ZERO) + normal_delta.min(Vec4::ZERO) + extra_delta.min(Vec4::ZERO);
 		}
-		0
+		let positive_length = positive.length();
+		let negative_length = negative.length();
+		if positive_length > negative_length {
+			return positive_length + negative_length;
+		} else {
+			return -(negative_length + positive_length);
+		}
 	}
 }
 impl Octant {
 	pub fn new() -> Octant {
 		return Octant{index: NULL_INDEX, colour: 0, normal: 0, extra: 0};
-	}
-	pub fn difference(&self, other: &Self) -> i32 {
-		todo!();
 	}
 }
 
