@@ -20,13 +20,3 @@ possibilty: split the tree structure and the node data
 TODO: find a solution using info below
 optimal for 3080 is using 8x4 workgroup and fifo. still worried that the extreme lows come from the prior frame running too fast????
 when ran using render doc, the extreme lows are not seen but neither are the extreme highs, so it may be something to do with the ultra fast frames
-
-math of spatial propogation:
-
-
-
-notes on rust in general
-	:mut differences when defining something
-		- mut infront of var name will create a var itself that can be changed
-		- &mut is put infront of the type instead of the var beause it modifies the type itself, rather than the behaviour of the variable
-	:self is the default var name for self, while Self is the default type holder, this also goes for fn, where fn represents function while Fn represents a function as a type
