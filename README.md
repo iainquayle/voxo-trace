@@ -1,9 +1,9 @@
-#Voxo Trace
+# Voxo Trace
 
-##Overview
+## Overview
 
 Voxo Trace is a volumetric voxel ray tracer written in Rust.
 
-##Running
+## Running
 
 Cd into the root directory and run `cargo run --release`. 
