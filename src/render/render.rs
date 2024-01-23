@@ -317,7 +317,7 @@ struct RenderIntegrals {
 impl RenderIntegrals {
 	pub fn new(window: &Window) -> Self {
 		let instance = Instance::new(InstanceDescriptor{
-			backends: Backends::DX12,
+			backends: Backends::all(),
 			dx12_shader_compiler: Default::default(),	
 			//dx12_shader_compiler: wgpu::Dx12Compiler::Dxc { 
 			//	dxil_path: Some(PathBuf::from("dxil.dll")),

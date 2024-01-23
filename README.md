@@ -4,6 +4,8 @@
 
 Voxo Trace is a volumetric voxel ray tracer written in Rust.
 
-## Running
+## Setup 
 
-Cd into the root directory and run `cargo run --release`. 
+Requires Rust 1.31 or later.
+Should work on Windows, Linux is not yet running (at least Manjaro).
+
